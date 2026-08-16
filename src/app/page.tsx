@@ -1,25 +1,30 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import Link from "next/link";
 import {
   TrendingUp,
-  ShoppingCart,
   Package,
-  Boxes,
-  Users,
   AlertTriangle,
   ArrowUpRight,
-  Clock,
   CheckCircle2,
-  Store,
   Calculator,
+  Calendar,
 } from "lucide-react";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+} from "recharts";
 import { useErp } from "@/context/erp-context";
-import { formatCLP, formatDateTime } from "@/lib/utils";
+import { formatCLP } from "@/lib/utils";
 
 export default function DashboardPage() {
-  const { productos, ventas, movimientos, clientes, empresa } = useErp();
+  const { productos, ventas } = useErp();
 
   // 1. Cálculos de Ventas Hoy
   const hoyStr = new Date().toISOString().slice(0, 10);
@@ -39,6 +44,34 @@ export default function DashboardPage() {
 
   // 4. Productos Bajo Stock
   const productosCriticos = productos.filter((p) => p.stock_actual <= p.stock_minimo);
+
+  // 5. Gráfico Lineal de Ventas por Días de la Semana (Últimos 7 días)
+  const salesWeeklyData = useMemo(() => {
+    const diasSemana = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+    const resultado = [];
+
+    // Generar los últimos 7 días terminando en hoy
+    const hoy = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(hoy);
+      d.setDate(hoy.getDate() - i);
+      const fechaISO = d.toISOString().slice(0, 10);
+      const diaNombre = diasSemana[d.getDay()];
+
+      // Sumar ventas de ese día
+      const ventasDia = ventas.filter((v) => v.fecha_venta?.startsWith(fechaISO));
+      const totalDia = ventasDia.reduce((acc, v) => acc + Number(v.total || 0), 0);
+
+      resultado.push({
+        dia: diaNombre,
+        fecha: fechaISO,
+        monto: totalDia,
+        transacciones: ventasDia.length,
+      });
+    }
+
+    return resultado;
+  }, [ventas]);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
@@ -134,58 +167,87 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Tablas de Últimas Ventas y Alertas */}
+      {/* SECCIÓN PRINCIPAL: Gráfico Lineal de Ventas y Alertas */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Últimas Ventas */}
-        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-lg p-5 shadow-xs flex flex-col justify-between">
+        {/* GRÁFICO LINEAL DE VENTAS (DÍAS DE LA SEMANA vs DINERO) */}
+        <div className="lg:col-span-2 bg-white border border-slate-200 rounded-lg p-6 shadow-xs flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h2 className="font-bold text-sm text-slate-900">Últimas Ventas Emitidas</h2>
-              <Link
-                href="/ventas"
-                className="text-xs font-semibold text-[#3a4d6b] hover:underline flex items-center space-x-1"
-              >
-                <span>Ver historial</span>
-                <ArrowUpRight className="w-3 h-3" />
-              </Link>
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <Calendar className="w-4 h-4 text-[#3a4d6b]" />
+                <h2 className="font-bold text-sm text-slate-900">
+                  Evolución de Ventas Semanales (Lunes a Domingo)
+                </h2>
+              </div>
+              <span className="text-xs font-semibold text-slate-400">
+                Eje X: Días • Eje Y: Dinero ($ CLP)
+              </span>
             </div>
 
-            <div className="divide-y divide-slate-100 mt-1">
-              {ventas.length === 0 ? (
-                <div className="py-12 text-center text-slate-400 text-xs">
-                  Aún no hay ventas registradas. Abre el POS para emitir la primera boleta.
-                </div>
-              ) : (
-                ventas.slice(0, 5).map((v) => (
-                  <div
-                    key={v.id}
-                    className="py-3 flex items-center justify-between text-xs hover:bg-slate-50 px-2 rounded transition-colors"
-                  >
-                    <div className="flex items-center space-x-3">
-                      <span className="font-mono font-bold text-slate-700">
-                        #{v.numero_folio}
-                      </span>
-                      <div>
-                        <p className="font-semibold text-slate-900">
-                          {v.cliente_nombre || "Consumidor Final"}
-                        </p>
-                        <p className="text-[11px] text-slate-400">
-                          {formatDateTime(v.fecha_venta)} • {v.metodo_pago}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-bold text-slate-900 text-sm">
-                        {formatCLP(v.total)}
-                      </p>
-                      <span className="text-[10px] text-emerald-600 font-semibold">
-                        {v.estado}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              )}
+            <div className="h-72 w-full pt-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={salesWeeklyData}
+                  margin={{ top: 10, right: 20, left: 10, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                  <XAxis
+                    dataKey="dia"
+                    stroke="#94a3b8"
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={{ stroke: "#e2e8f0" }}
+                  />
+                  <YAxis
+                    stroke="#94a3b8"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`}
+                  />
+                  <Tooltip
+                    content={({ active, payload, label }) => {
+                      if (active && payload && payload.length) {
+                        const data = payload[0].payload;
+                        return (
+                          <div className="bg-white border border-slate-300 p-3 rounded-lg shadow-md text-xs space-y-1">
+                            <p className="font-bold text-slate-900">
+                              {label} ({data.fecha})
+                            </p>
+                            <p className="text-emerald-700 font-bold text-sm">
+                              Monto: {formatCLP(data.monto)}
+                            </p>
+                            <p className="text-slate-500">
+                              Transacciones: {data.transacciones} boletas
+                            </p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="monto"
+                    stroke="#3a4d6b"
+                    strokeWidth={3}
+                    dot={{ fill: "#3a4d6b", r: 4, strokeWidth: 2, stroke: "#ffffff" }}
+                    activeDot={{ r: 7, fill: "#0284c7" }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
+          </div>
+
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>Gráfica actualizada en tiempo real con cada venta del POS</span>
+            <Link
+              href="/ventas"
+              className="font-semibold text-[#3a4d6b] hover:underline flex items-center space-x-1"
+            >
+              <span>Ver todas las ventas</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </Link>
           </div>
         </div>
 

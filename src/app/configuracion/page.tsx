@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   RefreshCw,
   Download,
+  KeyRound,
 } from "lucide-react";
 import { useErp } from "@/context/erp-context";
 import { formatCLP } from "@/lib/utils";
@@ -26,6 +27,8 @@ export default function ConfiguracionPage() {
     agregarProductosLote,
     vaciarCatalogo,
     recargarDatos,
+    user,
+    cambiarPassword,
   } = useErp();
 
   const [isImporting, setIsImporting] = useState(false);
@@ -36,6 +39,44 @@ export default function ConfiguracionPage() {
   const [isPurging, setIsPurging] = useState(false);
   const [purgeConfirmText, setPurgeConfirmText] = useState("");
   const [isPurgeModalOpen, setIsPurgeModalOpen] = useState(false);
+
+  // Estados de cambio de contraseña
+  const [currentPass, setCurrentPass] = useState("");
+  const [newPass, setNewPass] = useState("");
+  const [confirmNewPass, setConfirmNewPass] = useState("");
+  const [passwordFeedback, setPasswordFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordFeedback(null);
+
+    if (newPass !== confirmNewPass) {
+      setPasswordFeedback({
+        type: "error",
+        message: "Las contraseñas nuevas no coinciden.",
+      });
+      return;
+    }
+
+    const res = await cambiarPassword(currentPass, newPass);
+    if (res.success) {
+      setPasswordFeedback({
+        type: "success",
+        message: "¡Contraseña actualizada exitosamente!",
+      });
+      setCurrentPass("");
+      setNewPass("");
+      setConfirmNewPass("");
+    } else {
+      setPasswordFeedback({
+        type: "error",
+        message: res.error || "Error al cambiar la contraseña.",
+      });
+    }
+  };
   // Corrección de caracteres con codificación rota (Mojibake UTF-8)
   const fixEncoding = (str: string): string => {
     if (!str) return "";
@@ -437,8 +478,77 @@ export default function ConfiguracionPage() {
           </div>
         </div>
 
-        {/* PANEL DERECHO: DIAGNÓSTICO */}
+        {/* PANEL DERECHO: DIAGNÓSTICO & SEGURIDAD */}
         <div className="space-y-6">
+          {/* Tarjeta de Seguridad y Cambio de Contraseña */}
+          <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-xs space-y-3">
+            <div className="flex items-center space-x-2 text-slate-900 font-bold pb-2 border-b border-slate-100">
+              <KeyRound className="w-4 h-4 text-[#3a4d6b]" />
+              <h2>Seguridad & Contraseña</h2>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              Cambia la clave de acceso para tu cuenta <span className="font-bold text-slate-700">{user?.username || "ADMIN"}</span>.
+            </p>
+
+            {passwordFeedback && (
+              <div
+                className={`p-2.5 rounded text-xs flex items-center space-x-1.5 ${
+                  passwordFeedback.type === "success"
+                    ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                    : "bg-rose-50 text-rose-800 border border-rose-200"
+                }`}
+              >
+                <span>{passwordFeedback.message}</span>
+              </div>
+            )}
+
+            <form onSubmit={handlePasswordSubmit} className="space-y-2 text-xs">
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-slate-600">Contraseña Actual</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Contraseña actual"
+                  value={currentPass}
+                  onChange={(e) => setCurrentPass(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-1.5 text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-slate-600">Nueva Contraseña</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Mínimo 4 caracteres"
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-1.5 text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-slate-600">Confirmar Nueva Contraseña</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Repite la nueva contraseña"
+                  value={confirmNewPass}
+                  onChange={(e) => setConfirmNewPass(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-1.5 text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full mt-2 py-2 rounded bg-[#3a4d6b] hover:bg-slate-700 text-white font-bold text-xs shadow-xs transition-colors"
+              >
+                Actualizar Contraseña
+              </button>
+            </form>
+          </div>
+
           <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-xs space-y-3">
             <div className="flex items-center space-x-2 text-slate-900 font-bold pb-2 border-b border-slate-100">
               <Database className="w-4 h-4 text-slate-700" />

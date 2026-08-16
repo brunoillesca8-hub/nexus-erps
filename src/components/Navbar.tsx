@@ -7,7 +7,7 @@ import { useErp } from "@/context/erp-context";
 import { Store, RefreshCw, ShoppingCart, LogOut, User } from "lucide-react";
 
 export default function Navbar() {
-  const { empresa, isSyncing, recargarDatos } = useErp();
+  const { empresa, isSyncing, recargarDatos, user, logout } = useErp();
   const pathname = usePathname();
 
   return (
@@ -63,11 +63,14 @@ export default function Navbar() {
           <div className="flex items-center space-x-3 pl-2 border-l border-white/20">
             <div className="hidden sm:block text-right">
               <span className="text-[11px] text-slate-300 block leading-tight">Usuario:</span>
-              <span className="text-xs font-bold text-white tracking-wide">ADMIN</span>
+              <span className="text-xs font-bold text-white tracking-wide">
+                {user?.username || "ADMIN"}
+              </span>
             </div>
 
             <button
-              onClick={() => alert("Sesión activa de administrador (Nexus ERP).")}
+              onClick={logout}
+              title="Cerrar Sesión Segura"
               className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg bg-white text-slate-800 hover:bg-slate-100 text-xs font-bold shadow-sm transition-all border border-slate-200"
             >
               <LogOut className="w-3.5 h-3.5 text-slate-600" />

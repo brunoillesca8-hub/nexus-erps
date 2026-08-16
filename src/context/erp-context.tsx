@@ -15,7 +15,22 @@ import type {
 } from "@/types/erp";
 import { generateUUID } from "@/lib/utils";
 
+export interface UserSession {
+  id: string;
+  username: string;
+  name: string;
+  role: string;
+  email: string;
+}
+
 interface ErpContextType {
+  // Autenticación
+  user: UserSession | null;
+  isAuthenticated: boolean;
+  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => void;
+  cambiarPassword: (passwordActual: string, passwordNueva: string) => Promise<{ success: boolean; error?: string }>;
+
   // Estado
   empresa: Empresa | null;
   sucursales: Sucursal[];
@@ -47,8 +62,15 @@ const ErpContext = createContext<ErpContextType | null>(null);
 
 const BROADCAST_CHANNEL_NAME = "nexus-erp-sync-channel";
 const POLLING_INTERVAL_MS = 8000; // 8 segundos
+const SESSION_STORAGE_KEY = "nexus_erp_session_v1";
+const PASSWORD_STORAGE_KEY = "nexus_erp_password_hash_v1";
 
 export function ErpProvider({ children }: { children: React.ReactNode }) {
+  // Estados de Autenticación
+  const [user, setUser] = useState<UserSession | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
+  // Estados del ERP
   const [empresa, setEmpresa] = useState<Empresa | null>(null);
   const [sucursales, setSucursales] = useState<Sucursal[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -64,6 +86,73 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const [syncError, setSyncError] = useState<string | null>(null);
 
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+
+  // Inicializar sesión
+  useEffect(() => {
+    try {
+      const savedSession = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (savedSession) {
+        setUser(JSON.parse(savedSession));
+      }
+      if (!localStorage.getItem(PASSWORD_STORAGE_KEY)) {
+        // Contraseña por defecto: admin123
+        localStorage.setItem(PASSWORD_STORAGE_KEY, "admin123");
+      }
+    } catch {
+      // Ignorar errores de localStorage
+    } finally {
+      setIsAuthChecking(false);
+    }
+  }, []);
+
+  // Login
+  const login = async (usernameInput: string, passwordInput: string) => {
+    const cleanUser = usernameInput.trim().toLowerCase();
+    const cleanPass = passwordInput.trim();
+
+    const storedPass = localStorage.getItem(PASSWORD_STORAGE_KEY) || "admin123";
+
+    if (
+      (cleanUser === "admin" || cleanUser === "admin@minegocio.cl" || cleanUser === "bruno") &&
+      cleanPass === storedPass
+    ) {
+      const sessionUser: UserSession = {
+        id: "usr_admin",
+        username: "ADMIN",
+        name: "Administrador General",
+        role: "ADMINISTRADOR",
+        email: "admin@minegocio.cl",
+      };
+
+      setUser(sessionUser);
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionUser));
+      return { success: true };
+    }
+
+    return { success: false, error: "Usuario o contraseña incorrectos." };
+  };
+
+  // Logout
+  const logout = () => {
+    setUser(null);
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  };
+
+  // Cambiar Contraseña
+  const cambiarPassword = async (passwordActual: string, passwordNueva: string) => {
+    const storedPass = localStorage.getItem(PASSWORD_STORAGE_KEY) || "admin123";
+
+    if (passwordActual !== storedPass) {
+      return { success: false, error: "La contraseña actual es incorrecta." };
+    }
+
+    if (!passwordNueva || passwordNueva.trim().length < 4) {
+      return { success: false, error: "La nueva contraseña debe tener al menos 4 caracteres." };
+    }
+
+    localStorage.setItem(PASSWORD_STORAGE_KEY, passwordNueva.trim());
+    return { success: true };
+  };
 
   // 1. Cargar datos desde Turso
   const fetchData = useCallback(async (isSilent = false) => {
@@ -147,7 +236,6 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
   // 2. Procesar Venta con Mutación Optimista + Lote ACID
   const procesarVenta = async (payload: ProcesarVentaPayload) => {
-    // Guardar estado previo para rollback en caso de error
     const previousProductos = [...productos];
     const previousVentas = [...ventas];
 
@@ -174,13 +262,11 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        // Rollback optimista
         setProductos(previousProductos);
         setVentas(previousVentas);
         return { success: false, error: data.error || "Error al procesar la venta" };
       }
 
-      // Notificar a otras ventanas y recargar en segundo plano
       notifyBroadcast("VENTA_REALIZADA");
       fetchData(true);
 
@@ -196,7 +282,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // 3. Ajustar Stock (Recepción de mercadería o ajustes manuales)
+  // 3. Ajustar Stock
   const ajustarStock = async (productoId: string, cantidad: number, motivo: string, tipo?: TipoMovimiento) => {
     try {
       const res = await fetch("/api/inventario/ajuste", {
@@ -224,7 +310,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // 4. Carga Masiva por Lotes (Batch de 100)
+  // 4. Carga Masiva por Lotes
   const agregarProductosLote = async (items: Partial<Producto>[]) => {
     try {
       const res = await fetch("/api/productos", {
@@ -274,7 +360,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // 6. Eliminar Producto (Desactivar)
+  // 6. Eliminar Producto
   const eliminarProducto = async (id: string) => {
     try {
       const res = await fetch(`/api/productos?id=${id}`, {
@@ -373,6 +459,11 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   return (
     <ErpContext.Provider
       value={{
+        user,
+        isAuthenticated: !!user,
+        login,
+        logout,
+        cambiarPassword,
         empresa,
         sucursales,
         categorias,
@@ -381,7 +472,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
         productos,
         ventas,
         movimientos,
-        isLoading,
+        isLoading: isLoading || isAuthChecking,
         isSyncing,
         lastSyncTime,
         syncError,
