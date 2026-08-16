@@ -1,0 +1,173 @@
+-- ==============================================================================
+-- NEXUS ERP: ESQUEMA LIBSQL / SQLITE DE ALTO RENDIMIENTO (TURSO DATABASE)
+-- ==============================================================================
+
+PRAGMA foreign_keys = ON;
+
+-- 1. Empresas (Tenants)
+CREATE TABLE IF NOT EXISTS empresas (
+    id TEXT PRIMARY KEY,
+    nombre TEXT NOT NULL,
+    rut_identificador TEXT,
+    telefono TEXT,
+    email TEXT,
+    direccion TEXT,
+    logo_url TEXT,
+    moneda TEXT DEFAULT 'CLP',
+    iva_porcentaje REAL DEFAULT 19.00,
+    activo INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. Sucursales (Locales)
+CREATE TABLE IF NOT EXISTS sucursales (
+    id TEXT PRIMARY KEY,
+    empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+    nombre TEXT NOT NULL,
+    codigo TEXT,
+    direccion TEXT,
+    telefono TEXT,
+    es_principal INTEGER DEFAULT 0,
+    activo INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. Categorías (Departamentos)
+CREATE TABLE IF NOT EXISTS categorias (
+    id TEXT PRIMARY KEY,
+    empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+    nombre TEXT NOT NULL,
+    descripcion TEXT,
+    activo INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 4. Proveedores
+CREATE TABLE IF NOT EXISTS proveedores (
+    id TEXT PRIMARY KEY,
+    empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+    nombre TEXT NOT NULL,
+    rut_identificador TEXT,
+    contacto_nombre TEXT,
+    telefono TEXT,
+    email TEXT,
+    direccion TEXT,
+    activo INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 5. Clientes (CRM)
+CREATE TABLE IF NOT EXISTS clientes (
+    id TEXT PRIMARY KEY,
+    empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+    nombre TEXT NOT NULL,
+    rut_identificador TEXT,
+    telefono TEXT,
+    email TEXT,
+    direccion TEXT,
+    notas TEXT,
+    activo INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 6. Productos
+CREATE TABLE IF NOT EXISTS productos (
+    id TEXT PRIMARY KEY,
+    empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+    categoria_id TEXT REFERENCES categorias(id) ON DELETE SET NULL,
+    proveedor_id TEXT REFERENCES proveedores(id) ON DELETE SET NULL,
+    nombre TEXT NOT NULL,
+    descripcion TEXT,
+    sku INTEGER NOT NULL,
+    codigo_barras TEXT,
+    precio_compra REAL NOT NULL DEFAULT 0,
+    precio_venta REAL NOT NULL DEFAULT 0,
+    stock_actual INTEGER NOT NULL DEFAULT 0,
+    stock_minimo INTEGER NOT NULL DEFAULT 5,
+    unidad_medida TEXT DEFAULT 'unidad',
+    imagen_url TEXT,
+    activo INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Índices de aceleración para búsquedas instantáneas
+CREATE INDEX IF NOT EXISTS idx_prod_barcode ON productos(codigo_barras);
+CREATE INDEX IF NOT EXISTS idx_prod_sku ON productos(sku);
+CREATE INDEX IF NOT EXISTS idx_prod_nombre ON productos(nombre);
+CREATE INDEX IF NOT EXISTS idx_prod_empresa ON productos(empresa_id);
+
+-- 7. Ventas
+-- En SQLite, INTEGER PRIMARY KEY es AUTOINCREMENT para el folio
+CREATE TABLE IF NOT EXISTS ventas (
+    id TEXT UNIQUE NOT NULL,
+    empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+    sucursal_id TEXT NOT NULL REFERENCES sucursales(id),
+    cliente_id TEXT REFERENCES clientes(id) ON DELETE SET NULL,
+    numero_folio INTEGER PRIMARY KEY AUTOINCREMENT,
+    subtotal REAL NOT NULL DEFAULT 0,
+    descuento REAL DEFAULT 0,
+    impuesto REAL NOT NULL DEFAULT 0,
+    total REAL NOT NULL DEFAULT 0,
+    metodo_pago TEXT CHECK(metodo_pago IN ('EFECTIVO', 'TARJETA_DEBITO', 'TARJETA_CREDITO', 'TRANSFERENCIA', 'OTRO')) DEFAULT 'EFECTIVO',
+    estado TEXT CHECK(estado IN ('COMPLETADA', 'ANULADA', 'PENDIENTE')) DEFAULT 'COMPLETADA',
+    notas TEXT,
+    fecha_venta TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ventas_empresa_fecha ON ventas(empresa_id, fecha_venta);
+CREATE INDEX IF NOT EXISTS idx_ventas_fecha ON ventas(fecha_venta);
+
+-- 8. Detalle de Ventas
+CREATE TABLE IF NOT EXISTS detalle_ventas (
+    id TEXT PRIMARY KEY,
+    venta_id TEXT NOT NULL REFERENCES ventas(id) ON DELETE CASCADE,
+    producto_id TEXT NOT NULL REFERENCES productos(id),
+    cantidad INTEGER NOT NULL,
+    precio_unitario REAL NOT NULL,
+    costo_unitario REAL NOT NULL,
+    subtotal REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_detalle_venta ON detalle_ventas(venta_id);
+
+-- 9. Movimientos de Inventario (Kardex)
+CREATE TABLE IF NOT EXISTS movimientos_inventario (
+    id TEXT PRIMARY KEY,
+    empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+    sucursal_id TEXT NOT NULL REFERENCES sucursales(id),
+    producto_id TEXT NOT NULL REFERENCES productos(id),
+    tipo TEXT CHECK(tipo IN ('ENTRADA_COMPRA', 'SALIDA_VENTA', 'AJUSTE_POSITIVO', 'AJUSTE_NEGATIVO', 'MERMA_DANADO', 'DEVOLUCION_CLIENTE', 'DEVOLUCION_PROVEEDOR')) NOT NULL,
+    cantidad INTEGER NOT NULL,
+    stock_anterior INTEGER NOT NULL,
+    stock_posterior INTEGER NOT NULL,
+    motivo TEXT,
+    venta_id TEXT REFERENCES ventas(id) ON DELETE SET NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_mov_prod_fecha ON movimientos_inventario(producto_id, created_at);
+
+-- ==============================================================================
+-- 10. DATOS SEMILLA BASE IDEMPOTENTES
+-- ==============================================================================
+
+INSERT OR IGNORE INTO empresas (id, nombre, rut_identificador, direccion, email, telefono, moneda, iva_porcentaje)
+VALUES ('emp_default', 'Mi Negocio Comercial', '76.123.456-7', 'Calle Comercial 123', 'contacto@minegocio.cl', '+56 9 1234 5678', 'CLP', 19.00);
+
+INSERT OR IGNORE INTO sucursales (id, empresa_id, nombre, codigo, es_principal)
+VALUES ('suc_default', 'emp_default', 'Local Principal', 'LOC-01', 1);
+
+INSERT OR IGNORE INTO categorias (id, empresa_id, nombre, descripcion)
+VALUES 
+    ('cat_bebidas', 'emp_default', 'Bebidas y Líquidos', 'Aguas, jugos, bebidas, cervezas y licores'),
+    ('cat_abarrotes', 'emp_default', 'Abarrotes Generales', 'Arroz, harinas, aceites, azúcar, sal y granos'),
+    ('cat_lacteos', 'emp_default', 'Lácteos y Quesos', 'Leches, quesos, mantequillas, cremas y yogures'),
+    ('cat_snacks', 'emp_default', 'Snacks y Dulces', 'Chocolates, galletas, papas fritas y confites'),
+    ('cat_limpieza', 'emp_default', 'Limpieza y Hogar', 'Detergentes, lavalozas, cloros, papeles y bolsas'),
+    ('cat_mascotas', 'emp_default', 'Mascotas', 'Alimentos para perros, gatos y accesorios');
+
+INSERT OR IGNORE INTO clientes (id, empresa_id, nombre, rut_identificador, telefono, email, direccion)
+VALUES
+    ('cli_default', 'emp_default', 'Cliente General / Consumidor Final', '66.666.666-6', '+56 9 0000 0000', 'general@caja.cl', 'Venta en Mesón');
