@@ -96,10 +96,10 @@ export default function ProductosPage() {
     [productos]
   );
 
-  // Listener para pistola USB y apps Wi-Fi en página de catálogo
+  // Listener para pistola USB y apps Wi-Fi en página de catálogo (solo cuando no hay modales abiertos)
   useBarcodeListener({
     onScan: handleBarcodeScanned,
-    enabled: true,
+    enabled: !isAddModalOpen && !isReponerModalOpen && !isScannerOpen,
   });
 
   // Filtrado y Búsqueda Predictiva Multi-palabra
