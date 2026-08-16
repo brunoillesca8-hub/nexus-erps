@@ -13,7 +13,6 @@ import {
   SwitchCamera,
   Keyboard,
   ArrowRight,
-  RefreshCw,
 } from "lucide-react";
 
 interface BarcodeScannerModalProps {
@@ -33,6 +32,10 @@ export default function BarcodeScannerModal({
   const controlsRef = useRef<IScannerControls | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  // Buffer de verificación de 2 lecturas idénticas para evitar falsos positivos
+  const lastDetectedRef = useRef<string | null>(null);
+  const detectCountRef = useRef<number>(0);
+
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   const [torchOn, setTorchOn] = useState(false);
@@ -40,9 +43,6 @@ export default function BarcodeScannerModal({
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [scannedCode, setScannedCode] = useState<string | null>(null);
-  const [isInitializing, setIsInitializing] = useState(true);
-
-  // Entrada manual de respaldo
   const [manualCode, setManualCode] = useState("");
 
   const playBeep = () => {
@@ -63,7 +63,7 @@ export default function BarcodeScannerModal({
     }
   };
 
-  // Detener todos los tracks y apagar la cámara de inmediato
+  // Detener todos los tracks y apagar la cámara
   const stopCamera = useCallback(() => {
     if (controlsRef.current) {
       try {
@@ -90,6 +90,8 @@ export default function BarcodeScannerModal({
       }
       videoRef.current.srcObject = null;
     }
+    lastDetectedRef.current = null;
+    detectCountRef.current = 0;
     setTorchOn(false);
   }, []);
 
@@ -115,32 +117,33 @@ export default function BarcodeScannerModal({
     }
   };
 
+  // Limpieza de código detectado
+  const cleanBarcode = (raw: string): string => {
+    return raw.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
+  };
+
   // Iniciar Escáner con dispositivo específico
   const startScanningDevice = useCallback(
     async (deviceId: string) => {
       stopCamera();
-      setIsInitializing(true);
       setErrorMsg(null);
 
       try {
-        // Hints optimizados para códigos de barra de retail y QR
+        // Formatos de retail estrictos y precisos (evita colisiones con formatos ruidosos como ITF o Code 39)
         const hints = new Map();
         hints.set(DecodeHintType.POSSIBLE_FORMATS, [
           BarcodeFormat.EAN_13,
           BarcodeFormat.EAN_8,
           BarcodeFormat.CODE_128,
-          BarcodeFormat.CODE_39,
           BarcodeFormat.UPC_A,
           BarcodeFormat.UPC_E,
           BarcodeFormat.QR_CODE,
-          BarcodeFormat.DATA_MATRIX,
-          BarcodeFormat.ITF,
         ]);
         hints.set(DecodeHintType.TRY_HARDER, true);
 
         const codeReader = new BrowserMultiFormatReader(hints, {
-          delayBetweenScanAttempts: 80,
-          delayBetweenScanSuccess: 500,
+          delayBetweenScanAttempts: 60,
+          delayBetweenScanSuccess: 600,
         });
 
         if (!videoRef.current) return;
@@ -150,14 +153,27 @@ export default function BarcodeScannerModal({
           videoRef.current,
           (result, error) => {
             if (result) {
-              const text = result.getText();
-              setScannedCode(text);
-              playBeep();
-              stopCamera();
-              setTimeout(() => {
-                onScan(text);
-                handleClose();
-              }, 300);
+              const rawText = result.getText();
+              const text = cleanBarcode(rawText);
+              if (!text || text.length < 3) return;
+
+              // Verificación de estabilidad: debe coincidir 2 veces consecutivas o ser un código QR/EAN de longitud completa
+              if (
+                lastDetectedRef.current === text ||
+                text.length >= 12 ||
+                result.getBarcodeFormat() === BarcodeFormat.QR_CODE
+              ) {
+                setScannedCode(text);
+                playBeep();
+                stopCamera();
+                setTimeout(() => {
+                  onScan(text);
+                  handleClose();
+                }, 250);
+              } else {
+                lastDetectedRef.current = text;
+                detectCountRef.current = 1;
+              }
             }
           }
         );
@@ -174,8 +190,6 @@ export default function BarcodeScannerModal({
             setHasTorch(!!capabilities.torch);
           }
         }
-
-        setIsInitializing(false);
       } catch (err: any) {
         console.error("Error al iniciar escáner:", err);
         setErrorMsg(
@@ -183,7 +197,6 @@ export default function BarcodeScannerModal({
             ? "Permiso de cámara denegado. Permite el acceso a la cámara en los ajustes de tu navegador."
             : "No se pudo conectar con la cámara seleccionada. Prueba cambiando de cámara."
         );
-        setIsInitializing(false);
       }
     },
     [stopCamera, onScan, handleClose]
@@ -200,7 +213,6 @@ export default function BarcodeScannerModal({
     }
 
     let isMounted = true;
-    setIsInitializing(true);
     setErrorMsg(null);
 
     BrowserMultiFormatReader.listVideoInputDevices()
@@ -217,7 +229,6 @@ export default function BarcodeScannerModal({
           setSelectedDeviceId(chosenId);
           startScanningDevice(chosenId);
         } else {
-          // Fallback a constraint automático si listVideoInputDevices viene vacío
           startScanningDevice("");
         }
       })
@@ -236,7 +247,7 @@ export default function BarcodeScannerModal({
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualCode.trim()) return;
-    const code = manualCode.trim();
+    const code = cleanBarcode(manualCode);
     stopCamera();
     onScan(code);
     handleClose();
@@ -271,13 +282,13 @@ export default function BarcodeScannerModal({
             autoPlay
           />
 
-          {/* Guía Visual con Escáner Láser Animado */}
+          {/* Guía Visual */}
           {!errorMsg && !scannedCode && (
             <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-6">
-              <div className="w-64 h-40 border-2 border-dashed border-cyan-400 rounded-xl bg-cyan-500/10 flex items-center justify-center relative shadow-lg">
+              <div className="w-64 h-36 border-2 border-dashed border-cyan-400 rounded-xl bg-cyan-500/10 flex items-center justify-center relative shadow-lg">
                 <div className="w-full h-0.5 bg-cyan-400 animate-pulse shadow-sm"></div>
                 <span className="absolute bottom-2 text-[10px] text-cyan-200 bg-black/60 px-2 py-0.5 rounded font-mono">
-                  Enfoca el código aquí
+                  Enfoca el código de barras aquí
                 </span>
               </div>
             </div>
@@ -307,7 +318,7 @@ export default function BarcodeScannerModal({
             </div>
           )}
 
-          {/* Controles sobre el video (Linterna & Selector) */}
+          {/* Controles sobre el video (Linterna) */}
           <div className="absolute top-2 right-2 flex items-center space-x-1.5 z-10">
             {hasTorch && (
               <button
@@ -351,7 +362,7 @@ export default function BarcodeScannerModal({
         <div className="p-4 bg-white border-t border-slate-200 space-y-2">
           <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider flex items-center space-x-1">
             <Keyboard className="w-3.5 h-3.5" />
-            <span>¿Código dañado? Ingrésalo manualmente:</span>
+            <span>O ingresa el código manualmente:</span>
           </span>
 
           <form onSubmit={handleManualSubmit} className="flex space-x-1.5">
@@ -375,7 +386,7 @@ export default function BarcodeScannerModal({
 
         {/* Footer */}
         <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
-          <span>Compatible con EAN-13, CODE-128 y QR</span>
+          <span>Lectura optimizada EAN-13, CODE-128 y QR</span>
           <button
             onClick={handleClose}
             className="px-3 py-1 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-semibold shadow-2xs"

@@ -120,47 +120,84 @@ export default function PosPage() {
   };
 
   const handleBarcodeScanned = (scannedCode: string) => {
-    const trimmed = scannedCode.trim();
-    if (!trimmed) return;
+    const raw = scannedCode.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
+    if (!raw) return;
 
-    const found = productos.find(
-      (p) =>
-        (p.codigo_barras && p.codigo_barras.trim() === trimmed) ||
-        p.sku.toString() === trimmed
-    );
+    // Variaciones para búsqueda flexible:
+    const cleanRaw = raw;
+    const noLeadingZeros = cleanRaw.replace(/^0+/, "");
+    const withPrefixSKU = cleanRaw.replace(/^SKU-?/i, "");
+
+    const found = productos.find((p) => {
+      const pBarcode = (p.codigo_barras || "").trim();
+      const pSku = (p.sku || "").toString().trim();
+
+      return (
+        pBarcode === cleanRaw ||
+        pSku === cleanRaw ||
+        (pBarcode && pBarcode === noLeadingZeros) ||
+        (pBarcode && pBarcode.replace(/^0+/, "") === noLeadingZeros) ||
+        pSku === withPrefixSKU ||
+        `SKU-${pSku}`.toLowerCase() === cleanRaw.toLowerCase()
+      );
+    });
 
     if (found) {
       addToCart(found, 1);
     } else {
-      setErrorMessage(`No se encontró ningún producto con el código "${trimmed}".`);
+      setErrorMessage(`No se encontró ningún producto con el código "${raw}".`);
       setTimeout(() => setErrorMessage(null), 3500);
     }
   };
 
-  // Listener para pistola lectora láser
+  // Mapa de conversión para pistolas lectoras en teclados con distribución en español
+  const spanishKeyMap: Record<string, string> = {
+    "!": "1",
+    '"': "2",
+    "·": "3",
+    "$": "4",
+    "%": "5",
+    "&": "6",
+    "/": "7",
+    "(": "8",
+    ")": "9",
+    "=": "0",
+    "?": "_",
+    "¿": "+",
+    "'": "-",
+  };
+
+  // Listener para pistola lectora láser física USB / Bluetooth
   useEffect(() => {
+    let fastBuffer = "";
+    let lastKeyTime = 0;
+
     const handleKeyDown = (e: KeyboardEvent) => {
       const now = Date.now();
-      const timeDiff = now - lastKeyTimeRef.current;
-      lastKeyTimeRef.current = now;
+      const diff = now - lastKeyTime;
+      lastKeyTime = now;
 
-      if (timeDiff > 300) {
-        barcodeBufferRef.current = "";
+      // Las pistolas lectoras físicas escriben a velocidades ultra rápidas (< 50ms por carácter)
+      if (diff > 80) {
+        fastBuffer = "";
       }
 
-      if (e.key === "Enter") {
-        if (barcodeBufferRef.current.length >= 3) {
+      if (e.key === "Enter" || e.key === "Tab") {
+        if (fastBuffer.length >= 3) {
           e.preventDefault();
-          handleBarcodeScanned(barcodeBufferRef.current);
-          barcodeBufferRef.current = "";
+          e.stopPropagation();
+          handleBarcodeScanned(fastBuffer);
+          fastBuffer = "";
         }
       } else if (e.key.length === 1) {
-        barcodeBufferRef.current += e.key;
+        // Normalizar caracteres si la pistola envía teclas modificadas por Shift
+        const normalizedChar = spanishKeyMap[e.key] || e.key;
+        fastBuffer += normalizedChar;
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [productos]);
 
   // Filtro de productos
