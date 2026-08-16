@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Search,
   Camera,
@@ -21,6 +21,7 @@ import { useErp } from "@/context/erp-context";
 import { formatCLP, matchesSearch } from "@/lib/utils";
 import BarcodeScannerModal from "@/components/BarcodeScannerModal";
 import TicketModal from "@/components/TicketModal";
+import { useBarcodeListener } from "@/hooks/useBarcodeListener";
 import type { Producto, CartItem, MetodoPago, Venta } from "@/types/erp";
 
 export default function PosPage() {
@@ -119,86 +120,68 @@ export default function PosPage() {
     setNotas("");
   };
 
-  const handleBarcodeScanned = (scannedCode: string) => {
-    const raw = scannedCode.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
-    if (!raw) return;
+  const [scanSuccessMsg, setScanSuccessMsg] = useState<string | null>(null);
 
-    // Variaciones para búsqueda flexible:
-    const cleanRaw = raw;
-    const noLeadingZeros = cleanRaw.replace(/^0+/, "");
-    const withPrefixSKU = cleanRaw.replace(/^SKU-?/i, "");
-
-    const found = productos.find((p) => {
-      const pBarcode = (p.codigo_barras || "").trim();
-      const pSku = (p.sku || "").toString().trim();
-
-      return (
-        pBarcode === cleanRaw ||
-        pSku === cleanRaw ||
-        (pBarcode && pBarcode === noLeadingZeros) ||
-        (pBarcode && pBarcode.replace(/^0+/, "") === noLeadingZeros) ||
-        pSku === withPrefixSKU ||
-        `SKU-${pSku}`.toLowerCase() === cleanRaw.toLowerCase()
-      );
-    });
-
-    if (found) {
-      addToCart(found, 1);
-    } else {
-      setErrorMessage(`No se encontró ningún producto con el código "${raw}".`);
-      setTimeout(() => setErrorMessage(null), 3500);
+  const playScanBeep = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(1900, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.12);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.12);
+    } catch {
+      // Ignorar
     }
   };
 
-  // Mapa de conversión para pistolas lectoras en teclados con distribución en español
-  const spanishKeyMap: Record<string, string> = {
-    "!": "1",
-    '"': "2",
-    "·": "3",
-    "$": "4",
-    "%": "5",
-    "&": "6",
-    "/": "7",
-    "(": "8",
-    ")": "9",
-    "=": "0",
-    "?": "_",
-    "¿": "+",
-    "'": "-",
-  };
+  const handleBarcodeScanned = useCallback(
+    (scannedCode: string) => {
+      const raw = scannedCode.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
+      if (!raw) return;
 
-  // Listener para pistola lectora láser física USB / Bluetooth
-  useEffect(() => {
-    let fastBuffer = "";
-    let lastKeyTime = 0;
+      const cleanRaw = raw;
+      const noLeadingZeros = cleanRaw.replace(/^0+/, "");
+      const withPrefixSKU = cleanRaw.replace(/^SKU-?/i, "");
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const now = Date.now();
-      const diff = now - lastKeyTime;
-      lastKeyTime = now;
+      const found = productos.find((p) => {
+        const pBarcode = (p.codigo_barras || "").trim();
+        const pSku = (p.sku || "").toString().trim();
 
-      // Las pistolas lectoras físicas escriben a velocidades ultra rápidas (< 50ms por carácter)
-      if (diff > 80) {
-        fastBuffer = "";
+        return (
+          pBarcode === cleanRaw ||
+          pSku === cleanRaw ||
+          (pBarcode && pBarcode === noLeadingZeros) ||
+          (pBarcode && pBarcode.replace(/^0+/, "") === noLeadingZeros) ||
+          pSku === withPrefixSKU ||
+          `SKU-${pSku}`.toLowerCase() === cleanRaw.toLowerCase()
+        );
+      });
+
+      if (found) {
+        addToCart(found, 1);
+        playScanBeep();
+        setScanSuccessMsg(`✅ Agregado: ${found.nombre} (${formatCLP(found.precio_venta)})`);
+        setTimeout(() => setScanSuccessMsg(null), 3000);
+      } else {
+        setErrorMessage(`No se encontró ningún producto con el código "${raw}".`);
+        setTimeout(() => setErrorMessage(null), 3500);
       }
+    },
+    [productos]
+  );
 
-      if (e.key === "Enter" || e.key === "Tab") {
-        if (fastBuffer.length >= 3) {
-          e.preventDefault();
-          e.stopPropagation();
-          handleBarcodeScanned(fastBuffer);
-          fastBuffer = "";
-        }
-      } else if (e.key.length === 1) {
-        // Normalizar caracteres si la pistola envía teclas modificadas por Shift
-        const normalizedChar = spanishKeyMap[e.key] || e.key;
-        fastBuffer += normalizedChar;
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [productos]);
+  // Hook universal para pistolas USB, apps Wi-Fi ("Barcode to PC") y eventos Paste
+  useBarcodeListener({
+    onScan: handleBarcodeScanned,
+    enabled: true,
+    maxKeyInterval: 600,
+  });
 
   // Filtro de productos
   const filteredProductos = useMemo(() => {
@@ -491,7 +474,14 @@ export default function PosPage() {
             })}
           </div>
 
-          {/* Error Alert */}
+          {/* Alertas de Escaneo y Error */}
+          {scanSuccessMsg && (
+            <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center space-x-2 animate-fadeIn font-semibold shadow-2xs">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+              <span>{scanSuccessMsg}</span>
+            </div>
+          )}
+
           {errorMessage && (
             <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center space-x-2 animate-fadeIn">
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
