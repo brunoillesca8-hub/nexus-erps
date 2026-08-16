@@ -106,6 +106,8 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
       stock_minimo INTEGER NOT NULL DEFAULT 5,
       unidad_medida TEXT DEFAULT 'unidad',
       imagen_url TEXT,
+      fecha_elaboracion TEXT,
+      fecha_vencimiento TEXT,
       activo INTEGER DEFAULT 1,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -115,6 +117,7 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
     `CREATE INDEX IF NOT EXISTS idx_prod_sku ON productos(sku);`,
     `CREATE INDEX IF NOT EXISTS idx_prod_nombre ON productos(nombre);`,
     `CREATE INDEX IF NOT EXISTS idx_prod_empresa ON productos(empresa_id);`,
+    `CREATE INDEX IF NOT EXISTS idx_prod_vencimiento ON productos(fecha_vencimiento);`,
 
     `CREATE TABLE IF NOT EXISTS ventas (
       id TEXT UNIQUE NOT NULL,
@@ -186,6 +189,20 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
     for (const statement of schemaStatements) {
       await db.execute(statement);
     }
+
+    // Migraciones seguras de columnas nuevas en caso de bases existentes
+    try {
+      await db.execute("ALTER TABLE productos ADD COLUMN fecha_elaboracion TEXT");
+    } catch {
+      // Columna ya existe
+    }
+
+    try {
+      await db.execute("ALTER TABLE productos ADD COLUMN fecha_vencimiento TEXT");
+    } catch {
+      // Columna ya existe
+    }
+
     return { success: true, message: "Base de datos Turso / LibSQL inicializada correctamente." };
   } catch (error: any) {
     console.error("Error al inicializar la base de datos:", error);

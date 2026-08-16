@@ -86,6 +86,8 @@ export interface Producto {
   stock_minimo: number;
   unidad_medida: string;
   imagen_url?: string | null;
+  fecha_elaboracion?: string | null; // YYYY-MM-DD
+  fecha_vencimiento?: string | null; // YYYY-MM-DD
   activo: number;
   created_at?: string;
   updated_at?: string;

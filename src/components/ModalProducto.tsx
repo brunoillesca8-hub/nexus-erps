@@ -285,6 +285,32 @@ export default function ModalProducto({
                   className="w-full bg-slate-50 border border-slate-300 text-slate-900 font-mono rounded-lg px-3 py-1.5 text-xs focus:bg-white focus:ring-1 focus:ring-slate-500 focus:outline-none"
                 />
               </div>
+
+              {/* Fecha de Elaboración */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700">Fecha de Elaboración</label>
+                <input
+                  type="date"
+                  value={formData.fecha_elaboracion || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, fecha_elaboracion: e.target.value })
+                  }
+                  className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-1.5 text-xs focus:bg-white focus:ring-1 focus:ring-slate-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Fecha de Vencimiento */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-700">Fecha de Vencimiento</label>
+                <input
+                  type="date"
+                  value={formData.fecha_vencimiento || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, fecha_vencimiento: e.target.value })
+                  }
+                  className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-1.5 text-xs focus:bg-white focus:ring-1 focus:ring-slate-500 focus:outline-none"
+                />
+              </div>
             </div>
 
             {/* Footer Botones */}

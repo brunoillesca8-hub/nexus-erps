@@ -73,8 +73,8 @@ export async function POST(req: Request) {
           const sku = item.sku ? Number(item.sku) : nextSku;
 
           batchStatements.push({
-            sql: `INSERT INTO productos (id, empresa_id, categoria_id, proveedor_id, nombre, descripcion, sku, codigo_barras, precio_compra, precio_venta, stock_actual, stock_minimo, unidad_medida, imagen_url, activo, created_at, updated_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            sql: `INSERT INTO productos (id, empresa_id, categoria_id, proveedor_id, nombre, descripcion, sku, codigo_barras, precio_compra, precio_venta, stock_actual, stock_minimo, unidad_medida, imagen_url, fecha_elaboracion, fecha_vencimiento, activo, created_at, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                   ON CONFLICT(id) DO UPDATE SET
                     nombre = excluded.nombre,
                     categoria_id = excluded.categoria_id,
@@ -88,6 +88,8 @@ export async function POST(req: Request) {
                     stock_minimo = excluded.stock_minimo,
                     unidad_medida = excluded.unidad_medida,
                     imagen_url = excluded.imagen_url,
+                    fecha_elaboracion = excluded.fecha_elaboracion,
+                    fecha_vencimiento = excluded.fecha_vencimiento,
                     updated_at = CURRENT_TIMESTAMP`,
             args: [
               id,
@@ -104,6 +106,8 @@ export async function POST(req: Request) {
               Number(item.stock_minimo) || 5,
               item.unidad_medida || "unidad",
               item.imagen_url || null,
+              item.fecha_elaboracion || null,
+              item.fecha_vencimiento || null,
             ],
           });
         }
@@ -136,8 +140,8 @@ export async function POST(req: Request) {
     const id = item.id || generateUUID();
 
     await db.execute({
-      sql: `INSERT INTO productos (id, empresa_id, categoria_id, proveedor_id, nombre, descripcion, sku, codigo_barras, precio_compra, precio_venta, stock_actual, stock_minimo, unidad_medida, imagen_url, activo, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      sql: `INSERT INTO productos (id, empresa_id, categoria_id, proveedor_id, nombre, descripcion, sku, codigo_barras, precio_compra, precio_venta, stock_actual, stock_minimo, unidad_medida, imagen_url, fecha_elaboracion, fecha_vencimiento, activo, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET
               nombre = excluded.nombre,
               categoria_id = excluded.categoria_id,
@@ -151,6 +155,8 @@ export async function POST(req: Request) {
               stock_minimo = excluded.stock_minimo,
               unidad_medida = excluded.unidad_medida,
               imagen_url = excluded.imagen_url,
+              fecha_elaboracion = excluded.fecha_elaboracion,
+              fecha_vencimiento = excluded.fecha_vencimiento,
               updated_at = CURRENT_TIMESTAMP`,
       args: [
         id,
@@ -167,6 +173,8 @@ export async function POST(req: Request) {
         Number(item.stock_minimo) || 5,
         item.unidad_medida || "unidad",
         item.imagen_url || null,
+        item.fecha_elaboracion || null,
+        item.fecha_vencimiento || null,
       ],
     });
 
