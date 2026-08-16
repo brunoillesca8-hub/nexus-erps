@@ -4,8 +4,6 @@ import React, { useState, useMemo } from "react";
 import {
   Search,
   Download,
-  ArrowDownRight,
-  ArrowUpRight,
   ChevronDown,
 } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -13,32 +11,49 @@ import { useErp } from "@/context/erp-context";
 import { formatDateTime, matchesSearch } from "@/lib/utils";
 
 export default function InventarioPage() {
-  const { movimientos } = useErp();
+  const { movimientos, productos } = useErp();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTipo, setSelectedTipo] = useState("ALL");
+
+  // Mapeo rápido de productoId -> producto completo para obtener codigo_barras
+  const productosMap = useMemo(() => {
+    const map = new Map<string, any>();
+    productos.forEach((p) => {
+      map.set(p.id, p);
+    });
+    return map;
+  }, [productos]);
 
   const filteredMovimientos = useMemo(() => {
     return movimientos.filter((m) => {
       const matchTipo = selectedTipo === "ALL" || m.tipo === selectedTipo;
+      const prod = productosMap.get(m.producto_id);
+      const codigoCompleto = prod?.codigo_barras || m.producto_sku?.toString() || "";
+
       const matchSearch =
         matchesSearch(m.producto_nombre || "", searchQuery) ||
         (m.motivo && matchesSearch(m.motivo, searchQuery)) ||
-        (m.producto_sku && m.producto_sku.toString().includes(searchQuery));
+        codigoCompleto.includes(searchQuery);
       return matchTipo && matchSearch;
     });
-  }, [movimientos, selectedTipo, searchQuery]);
+  }, [movimientos, selectedTipo, searchQuery, productosMap]);
 
   const exportToExcel = () => {
-    const dataToExport = filteredMovimientos.map((m) => ({
-      Fecha: formatDateTime(m.created_at),
-      SKU: m.producto_sku || "",
-      Producto: m.producto_nombre || "",
-      Tipo: m.tipo,
-      Cantidad: m.cantidad,
-      "Stock Anterior": m.stock_anterior,
-      "Stock Resultante": m.stock_posterior,
-      Motivo: m.motivo || "",
-    }));
+    const dataToExport = filteredMovimientos.map((m) => {
+      const prod = productosMap.get(m.producto_id);
+      const codigoCompleto = prod?.codigo_barras || m.producto_sku || "";
+
+      return {
+        Fecha: formatDateTime(m.created_at),
+        "Código / SKU": codigoCompleto,
+        Producto: m.producto_nombre || "",
+        Tipo: m.tipo,
+        Cantidad: m.cantidad,
+        "Stock Anterior": m.stock_anterior,
+        "Stock Resultante": m.stock_posterior,
+        Motivo: m.motivo || "",
+      };
+    });
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
     const workbook = XLSX.utils.book_new();
@@ -47,21 +62,21 @@ export default function InventarioPage() {
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
+    <div className="space-y-4 max-w-full">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3.5 sm:p-4 rounded-lg border border-slate-200 shadow-2xs">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
             Kardex & Movimientos de Inventario
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Auditoría de entradas, salidas por ventas, ajustes manuales y mermas.
+          <p className="text-xs text-slate-500 mt-0.5">
+            Auditoría cronológica de entradas, ventas y reposiciones en tiempo real.
           </p>
         </div>
 
         <button
           onClick={exportToExcel}
-          className="flex items-center space-x-1.5 px-4 py-2 rounded-lg bg-[#3a4d6b] hover:bg-slate-700 text-white text-xs font-bold shadow-xs transition-colors self-start sm:self-auto"
+          className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-[#3a4d6b] hover:bg-slate-700 text-white text-xs font-bold shadow-xs transition-colors self-start sm:self-auto"
         >
           <Download className="w-3.5 h-3.5" />
           <span>Exportar Kardex (CSV)</span>
@@ -69,15 +84,15 @@ export default function InventarioPage() {
       </div>
 
       {/* Filtros */}
-      <div className="flex flex-col sm:flex-row items-center gap-3">
+      <div className="flex flex-col sm:flex-row items-center gap-2.5">
         <div className="relative flex-1 w-full">
-          <Search className="w-4 h-4 text-cyan-600 absolute left-3.5 top-3" />
+          <Search className="w-4 h-4 text-cyan-600 absolute left-3 top-2.5" />
           <input
             type="text"
-            placeholder="Buscar por producto, SKU o motivo..."
+            placeholder="Buscar por producto, código completo o motivo..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-white border border-slate-300 text-slate-900 placeholder-slate-400 pl-10 pr-4 py-2 rounded-lg text-xs sm:text-sm focus:ring-1 focus:ring-slate-500 focus:outline-none shadow-xs"
+            className="w-full bg-white border border-slate-300 text-slate-900 placeholder-slate-400 pl-9 pr-3 py-1.5 rounded-lg text-xs sm:text-sm focus:ring-1 focus:ring-slate-500 focus:outline-none shadow-2xs"
           />
         </div>
 
@@ -85,7 +100,7 @@ export default function InventarioPage() {
           <select
             value={selectedTipo}
             onChange={(e) => setSelectedTipo(e.target.value)}
-            className="w-full sm:w-56 appearance-none bg-white border border-slate-300 text-slate-700 text-xs sm:text-sm rounded-lg px-3.5 py-2 pr-9 focus:ring-1 focus:ring-slate-500 focus:outline-none shadow-xs"
+            className="w-full sm:w-56 appearance-none bg-white border border-slate-300 text-slate-700 text-xs rounded-lg px-3 py-1.5 pr-8 focus:ring-1 focus:ring-slate-500 focus:outline-none shadow-2xs"
           >
             <option value="ALL">Todos los movimientos</option>
             <option value="ENTRADA_COMPRA">Entrada por Compra</option>
@@ -94,18 +109,18 @@ export default function InventarioPage() {
             <option value="AJUSTE_NEGATIVO">Ajuste Negativo (-)</option>
             <option value="MERMA_DANADO">Merma o Daño</option>
           </select>
-          <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
+          <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-2 pointer-events-none" />
         </div>
       </div>
 
       {/* Tabla Kardex */}
-      <div className="bg-white border border-slate-200 rounded-lg shadow-xs overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-lg shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-700">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-800 font-bold">
               <tr>
                 <th className="py-3 px-4">Fecha & Hora</th>
-                <th className="py-3 px-4">SKU / Producto</th>
+                <th className="py-3 px-4">Código / Producto</th>
                 <th className="py-3 px-4">Tipo de Movimiento</th>
                 <th className="py-3 px-4 text-center">Cantidad</th>
                 <th className="py-3 px-4 text-center">Stock Antes</th>
@@ -122,6 +137,8 @@ export default function InventarioPage() {
                 </tr>
               ) : (
                 filteredMovimientos.map((m) => {
+                  const prod = productosMap.get(m.producto_id);
+                  const codigoCompleto = prod?.codigo_barras || m.producto_sku || "";
                   const isPositive =
                     m.tipo === "ENTRADA_COMPRA" || m.tipo === "AJUSTE_POSITIVO";
 
@@ -134,9 +151,9 @@ export default function InventarioPage() {
                         <div className="font-bold text-slate-900">
                           {m.producto_nombre || "Producto"}
                         </div>
-                        {m.producto_sku && (
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            SKU #{m.producto_sku}
+                        {codigoCompleto && (
+                          <div className="text-[11px] text-slate-600 font-mono font-semibold">
+                            {codigoCompleto}
                           </div>
                         )}
                       </td>
@@ -163,7 +180,7 @@ export default function InventarioPage() {
                         {m.stock_posterior} u.
                       </td>
                       <td className="py-3 px-4 text-slate-600">
-                        {m.motivo || "-"}
+                        {m.motivo || "Transacción registrada"}
                       </td>
                     </tr>
                   );
