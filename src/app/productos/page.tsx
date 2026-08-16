@@ -262,10 +262,13 @@ export default function ProductosPage() {
                 </tr>
               ) : (
                 paginatedProductos.map((p) => {
+                  const pCompra = Number(p.precio_compra) || 0;
+                  const pVenta = Number(p.precio_venta) || 0;
+                  const stockActual = Number(p.stock_actual) || 0;
                   const margen =
-                    p.precio_venta > 0
-                      ? (((p.precio_venta - p.precio_compra) / p.precio_venta) * 100).toFixed(1)
-                      : "0";
+                    pVenta > 0
+                      ? (((pVenta - pCompra) / pVenta) * 100).toFixed(1)
+                      : "0.0";
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-50/60 transition-colors">
@@ -281,25 +284,27 @@ export default function ProductosPage() {
                         {p.nombre}
                       </td>
                       <td className="py-3 px-4 text-slate-600">
-                        {p.categoria_nombre || "Categoría"}
+                        {p.categoria_nombre || "General"}
                       </td>
                       <td className="py-3 px-4 text-right font-mono text-slate-700">
                         {new Intl.NumberFormat("es-CL", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        }).format(p.precio_compra)}
+                          minimumFractionDigits: 0,
+                          maximumFractionDigits: 0,
+                        }).format(pCompra)}
                       </td>
                       <td className="py-3 px-4 text-right font-mono font-semibold text-slate-900">
                         {new Intl.NumberFormat("es-CL", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        }).format(p.precio_venta)}
+                          minimumFractionDigits: 0,
+                          maximumFractionDigits: 0,
+                        }).format(pVenta)}
                       </td>
                       <td className="py-3 px-4 text-right font-mono text-slate-700">
-                        {margen}%
+                        <span className={Number(margen) > 0 ? "text-emerald-700 font-semibold" : "text-slate-500"}>
+                          {margen}%
+                        </span>
                       </td>
                       <td className="py-3 px-4 text-center font-mono font-medium text-slate-800">
-                        {p.stock_actual} u.
+                        {stockActual} u.
                       </td>
                       <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center space-x-1.5">

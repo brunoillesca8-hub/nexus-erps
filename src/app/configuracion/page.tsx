@@ -36,7 +36,61 @@ export default function ConfiguracionPage() {
   const [isPurging, setIsPurging] = useState(false);
   const [purgeConfirmText, setPurgeConfirmText] = useState("");
   const [isPurgeModalOpen, setIsPurgeModalOpen] = useState(false);
+  // Corrección de caracteres con codificación rota (Mojibake UTF-8)
+  const fixEncoding = (str: string): string => {
+    if (!str) return "";
+    return str
+      .replace(/Ã¡/g, "á")
+      .replace(/Ã©/g, "é")
+      .replace(/Ã­/g, "í")
+      .replace(/Ã³/g, "ó")
+      .replace(/Ãº/g, "ú")
+      .replace(/Ã±/g, "ñ")
+      .replace(/Ã /g, "Á")
+      .replace(/Ã‰/g, "É")
+      .replace(/Ã /g, "Í")
+      .replace(/Ã“/g, "Ó")
+      .replace(/Ãš/g, "Ú")
+      .replace(/Ã‘/g, "Ñ")
+      .replace(/Â/g, "");
+  };
 
+  // Extracción flexible de campos independiente de mayúsculas/minúsculas y acentos
+  const getRowField = (row: any, ...fieldAliases: string[]): any => {
+    for (const alias of fieldAliases) {
+      const cleanAlias = alias.toLowerCase().replace(/[\s_\-\.\(\)]/g, "");
+      for (const key of Object.keys(row)) {
+        const cleanKey = key.toLowerCase().replace(/[\s_\-\.\(\)]/g, "");
+        if (cleanKey === cleanAlias && row[key] !== undefined && row[key] !== "") {
+          return row[key];
+        }
+      }
+    }
+    return undefined;
+  };
+
+  // Conversión numérica segura tolerante a formatos con puntos, comas y símbolos
+  const parseNumber = (val: any, defaultVal = 0): number => {
+    if (val === undefined || val === null || val === "") return defaultVal;
+    if (typeof val === "number") return isNaN(val) ? defaultVal : val;
+    const cleanStr = String(val)
+      .replace(/[$€\s]/g, "")
+      .replace(/\.(?=\d{3})/g, "")
+      .replace(",", ".");
+    const parsed = parseFloat(cleanStr);
+    return isNaN(parsed) ? defaultVal : parsed;
+  };
+
+  // Extracción de SKU entero (ej: "SKU-0001" -> 1001 o 1)
+  const parseSku = (val: any, autoIndex: number): number => {
+    if (val === undefined || val === null || val === "") return autoIndex;
+    if (typeof val === "number") return val > 0 ? val : autoIndex;
+    const digits = String(val).replace(/\D/g, "");
+    const parsed = parseInt(digits, 10);
+    return isNaN(parsed) || parsed === 0 ? autoIndex : parsed;
+  };
+
+  // Procesar archivo CSV o Excel
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -45,12 +99,18 @@ export default function ConfiguracionPage() {
     setImportSuccessMessage(null);
     const fileName = file.name.toLowerCase();
 
-    if (fileName.endsWith(".csv")) {
+    if (fileName.endsWith(".csv") || fileName.endsWith(".txt")) {
       Papa.parse(file, {
         header: true,
-        skipEmptyLines: true,
+        dynamicTyping: false,
+        skipEmptyLines: "greedy",
+        delimitersToGuess: [";", ",", "\t", "|"],
         complete: (results) => {
-          processRawData(results.data);
+          if (results.data && results.data.length > 0) {
+            processRawData(results.data);
+          } else {
+            setImportError("El archivo CSV no contiene registros o está vacío.");
+          }
         },
         error: (err) => {
           setImportError(`Error al leer archivo CSV: ${err.message}`);
@@ -64,7 +124,7 @@ export default function ConfiguracionPage() {
           const workbook = XLSX.read(data, { type: "binary" });
           const sheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[sheetName];
-          const json = XLSX.utils.sheet_to_json(worksheet);
+          const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
           processRawData(json);
         } catch (err: any) {
           setImportError(`Error al procesar archivo Excel: ${err.message}`);
@@ -77,46 +137,46 @@ export default function ConfiguracionPage() {
   };
 
   const processRawData = (rows: any[]) => {
+    let currentAutoSku = 1001;
+
     const items: Partial<Producto>[] = rows
       .map((row) => {
-        const nombre =
-          row.nombre ||
-          row.Nombre ||
-          row.NOMBRE ||
-          row.descripcion ||
-          row.producto ||
-          row.Producto;
-        if (!nombre || !nombre.trim()) return null;
+        const rawNombre = getRowField(row, "nombre", "producto", "descripcion", "item", "articulo");
+        if (!rawNombre || !String(rawNombre).trim()) return null;
 
-        const sku = Number(row.sku || row.SKU || row.codigo || 0) || undefined;
-        const codigo_barras = (
-          row.codigo_barras ||
-          row.barcode ||
-          row.Barcode ||
-          row.EAN ||
-          row.ean ||
-          ""
-        ).toString();
-        const precio_compra = Number(
-          row.precio_compra || row.costo || row.Costo || row.PrecioCompra || 0
-        );
-        const precio_venta = Number(
-          row.precio_venta || row.precio || row.Precio || row.PrecioVenta || 0
-        );
-        const stock_actual = Number(
-          row.stock_actual || row.stock || row.Stock || row.cantidad || 0
-        );
-        const stock_minimo = Number(row.stock_minimo || row.minimo || 5);
-        const categoria_nombre = row.categoria || row.Categoria || row.departamento || "";
+        const nombre = fixEncoding(String(rawNombre).trim());
+        const rawSku = getRowField(row, "sku", "codigo", "skucode", "skuinter", "id");
+        const sku = parseSku(rawSku, currentAutoSku++);
 
+        const rawBarcode = getRowField(row, "codigo_barras", "codigobarras", "barcode", "ean", "ean13", "upc");
+        const codigo_barras = rawBarcode ? String(rawBarcode).trim() : undefined;
+
+        const rawPrecioCompra = getRowField(row, "precio_compra", "preciocompra", "costo", "pcompra", "pcompraunitneto", "costounitario", "compra");
+        const precio_compra = parseNumber(rawPrecioCompra, 0);
+
+        const rawPrecioVenta = getRowField(row, "precio_venta", "precioventa", "precio", "pventa", "pventaunitinciva", "preciounitario", "venta");
+        const precio_venta = parseNumber(rawPrecioVenta, 0);
+
+        const rawStock = getRowField(row, "stock", "stock_actual", "stockactual", "cantidad", "unidades");
+        const stock_actual = parseNumber(rawStock, 0);
+
+        const rawStockMin = getRowField(row, "stock_minimo", "stockminimo", "minimo", "stockmin");
+        const stock_minimo = parseNumber(rawStockMin, 5);
+
+        const rawCat = getRowField(row, "categoria", "departamento", "depto", "rubro", "category");
+        const categoriaNombre = rawCat ? fixEncoding(String(rawCat).trim()) : "";
+
+        // Buscar coincidencia en categorías existentes
         const catFound = categorias.find(
-          (c) => c.nombre.toLowerCase() === categoria_nombre.toLowerCase()
+          (c) =>
+            c.nombre.toLowerCase().includes(categoriaNombre.toLowerCase()) ||
+            categoriaNombre.toLowerCase().includes(c.nombre.toLowerCase())
         );
 
         return {
-          nombre: nombre.trim(),
+          nombre,
           sku,
-          codigo_barras: codigo_barras.trim() || undefined,
+          codigo_barras,
           precio_compra,
           precio_venta,
           stock_actual,
@@ -128,12 +188,12 @@ export default function ConfiguracionPage() {
       .filter(Boolean) as Partial<Producto>[];
 
     if (items.length === 0) {
-      setImportError("No se encontraron registros de productos válidos en el archivo.");
+      setImportError("No se pudieron extraer columnas válidas. Asegúrate de incluir columnas como Nombre, Precio_Compra, Precio_Venta, Stock.");
       setParsedPreview([]);
     } else {
       setParsedPreview(items);
     }
-  };
+  };;
 
   const handleExecuteImport = async () => {
     if (parsedPreview.length === 0) return;
