@@ -43,8 +43,8 @@ export default function Sidebar() {
     }`;
 
   return (
-    <aside className="w-52 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col justify-between select-none min-h-[calc(100vh-4rem)]">
-      <div className="p-3 space-y-4">
+    <aside className="hidden lg:flex w-52 flex-shrink-0 bg-white border-r border-slate-200 flex-col justify-between select-none min-h-[calc(100vh-4rem)] sticky top-16">
+      <div className="p-3 space-y-4 overflow-y-auto">
         {/* GRUPO: OPERACIONES */}
         <div className="space-y-0.5">
           <span className="px-2.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
@@ -110,9 +110,9 @@ export default function Sidebar() {
                 <span>Analítica & Reportes</span>
               </div>
               {informesOpen ? (
-                <ChevronDown className="w-3 h-3 text-slate-400" />
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
               ) : (
-                <ChevronRight className="w-3 h-3 text-slate-400" />
+                <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
               )}
             </button>
 
@@ -122,7 +122,7 @@ export default function Sidebar() {
                   href="/informes/ejecutivo"
                   className={subNavItemClass(pathname === "/informes/ejecutivo")}
                 >
-                  <TrendingUp className="w-3 h-3 text-slate-400" />
+                  <TrendingUp className="w-3.5 h-3.5 text-slate-400" />
                   <span>Resumen Ejecutivo</span>
                 </Link>
 
@@ -130,7 +130,7 @@ export default function Sidebar() {
                   href="/informes/top-productos"
                   className={subNavItemClass(pathname === "/informes/top-productos")}
                 >
-                  <Award className="w-3 h-3 text-slate-400" />
+                  <Award className="w-3.5 h-3.5 text-slate-400" />
                   <span>TOP Productos</span>
                 </Link>
 
@@ -138,7 +138,7 @@ export default function Sidebar() {
                   href="/informes/abc-xyz"
                   className={subNavItemClass(pathname === "/informes/abc-xyz")}
                 >
-                  <PieChart className="w-3 h-3 text-slate-400" />
+                  <PieChart className="w-3.5 h-3.5 text-slate-400" />
                   <span>Matriz ABC-XYZ</span>
                 </Link>
 
@@ -146,7 +146,7 @@ export default function Sidebar() {
                   href="/informes/rentabilidad"
                   className={subNavItemClass(pathname === "/informes/rentabilidad")}
                 >
-                  <DollarSign className="w-3 h-3 text-slate-400" />
+                  <DollarSign className="w-3.5 h-3.5 text-slate-400" />
                   <span>Rentabilidad & Margen</span>
                 </Link>
 
@@ -156,7 +156,7 @@ export default function Sidebar() {
                     pathname === "/informes/horarios" || pathname === "/analitica/horarios"
                   )}
                 >
-                  <Clock className="w-3 h-3 text-slate-400" />
+                  <Clock className="w-3.5 h-3.5 text-slate-400" />
                   <span>Horarios & Demanda</span>
                 </Link>
               </div>
