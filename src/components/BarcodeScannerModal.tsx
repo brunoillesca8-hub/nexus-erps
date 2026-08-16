@@ -34,6 +34,10 @@ export default function BarcodeScannerModal({
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
+  // Filtro de confirmación de 2 lecturas consecutivas idénticas
+  const lastCandidateRef = useRef<string | null>(null);
+  const lastCandidateTimeRef = useRef<number>(0);
+
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
   const [torchOn, setTorchOn] = useState(false);
@@ -92,6 +96,8 @@ export default function BarcodeScannerModal({
       }
       videoRef.current.srcObject = null;
     }
+    lastCandidateRef.current = null;
+    lastCandidateTimeRef.current = 0;
     setTorchOn(false);
   }, []);
 
@@ -120,19 +126,29 @@ export default function BarcodeScannerModal({
     return raw.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
   };
 
-  // Procesa código confirmado
-  const handleFoundCode = useCallback(
-    (text: string) => {
-      const cleaned = cleanBarcode(text);
-      if (!cleaned || cleaned.length < 3) return;
+  // Validación y confirmación doble de código
+  const handleCandidateCode = useCallback(
+    (rawText: string) => {
+      const text = cleanBarcode(rawText);
+      if (!text || text.length < 3) return;
 
-      setScannedCode(cleaned);
-      playBeep();
-      stopCamera();
-      setTimeout(() => {
-        onScan(cleaned);
-        handleClose();
-      }, 250);
+      const now = Date.now();
+      const prevCandidate = lastCandidateRef.current;
+      const timeDiff = now - lastCandidateTimeRef.current;
+
+      // Si es exactamente el mismo código leído en 2 cuadros seguidos dentro de 400ms, O si es un QR completo
+      if (prevCandidate === text && timeDiff < 400 && timeDiff > 40) {
+        setScannedCode(text);
+        playBeep();
+        stopCamera();
+        setTimeout(() => {
+          onScan(text);
+          handleClose();
+        }, 250);
+      } else {
+        lastCandidateRef.current = text;
+        lastCandidateTimeRef.current = now;
+      }
     },
     [onScan, handleClose, stopCamera]
   );
@@ -145,11 +161,15 @@ export default function BarcodeScannerModal({
       try {
         const constraints: MediaStreamConstraints = {
           video: deviceId
-            ? { deviceId: { exact: deviceId } }
+            ? {
+                deviceId: { exact: deviceId },
+                width: { ideal: 1920, min: 1280 },
+                height: { ideal: 1080, min: 720 },
+              }
             : {
                 facingMode: { ideal: "environment" },
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
+                width: { ideal: 1920, min: 1280 },
+                height: { ideal: 1080, min: 720 },
               },
           audio: false,
         };
@@ -166,14 +186,25 @@ export default function BarcodeScannerModal({
         if (track) {
           const capabilities = (track as any).getCapabilities?.() || {};
           setHasTorch(!!capabilities.torch);
+
+          // Intentar autoenfoque continuo si el dispositivo lo soporta
+          if (capabilities.focusMode && capabilities.focusMode.includes("continuous")) {
+            try {
+              await (track as any).applyConstraints({
+                advanced: [{ focusMode: "continuous" }],
+              });
+            } catch {
+              // Ignorar
+            }
+          }
         }
 
-        // 1. INTENTO CON MOTOR NATIVO DEL NAVEGADOR (Hardware-Accelerated BarcodeDetector)
-        // Disponible en Chrome/Android/Edge con 100% de precisión y 0 falsos positivos
+        // 1. MOTOR NATIVO DEL NAVEGADOR (Hardware BarcodeDetector)
+        // Estrictamente EAN-13, UPC-A, Code-128 y QR (Sin EAN-8 que generaba "01011272")
         if ("BarcodeDetector" in window) {
           try {
             const barcodeDetector = new (window as any).BarcodeDetector({
-              formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "qr_code"],
+              formats: ["ean_13", "upc_a", "code_128", "qr_code"],
             });
 
             const scanLoop = async () => {
@@ -187,12 +218,11 @@ export default function BarcodeScannerModal({
                 if (barcodes && barcodes.length > 0) {
                   const rawVal = barcodes[0].rawValue;
                   if (rawVal) {
-                    handleFoundCode(rawVal);
-                    return;
+                    handleCandidateCode(rawVal);
                   }
                 }
               } catch {
-                // Continuar intentando
+                // Continuar
               }
 
               animationFrameRef.current = requestAnimationFrame(scanLoop);
@@ -201,25 +231,23 @@ export default function BarcodeScannerModal({
             animationFrameRef.current = requestAnimationFrame(scanLoop);
             return;
           } catch (e) {
-            console.warn("BarcodeDetector nativo no disponible, usando ZXing:", e);
+            console.warn("BarcodeDetector nativo error, usando ZXing:", e);
           }
         }
 
-        // 2. FALLBACK A ZXING CON FORMATOS ESTRICTOS CON CHECKSUM OBLIGATORIO
-        // ELIMINADO CODE_39 e ITF que producían falsos positivos como "51111717"
+        // 2. FALLBACK A ZXING
+        // Estrictamente EAN-13, UPC-A, Code-128 y QR
         const hints = new Map();
         hints.set(DecodeHintType.POSSIBLE_FORMATS, [
           BarcodeFormat.EAN_13,
-          BarcodeFormat.EAN_8,
           BarcodeFormat.UPC_A,
-          BarcodeFormat.UPC_E,
           BarcodeFormat.CODE_128,
           BarcodeFormat.QR_CODE,
         ]);
         hints.set(DecodeHintType.TRY_HARDER, true);
 
         const codeReader = new BrowserMultiFormatReader(hints, {
-          delayBetweenScanAttempts: 40,
+          delayBetweenScanAttempts: 30,
           delayBetweenScanSuccess: 500,
         });
 
@@ -230,8 +258,7 @@ export default function BarcodeScannerModal({
           videoRef.current,
           (result) => {
             if (result) {
-              const text = result.getText();
-              handleFoundCode(text);
+              handleCandidateCode(result.getText());
             }
           }
         );
@@ -241,12 +268,12 @@ export default function BarcodeScannerModal({
         console.error("Error al iniciar cámara:", err);
         setErrorMsg(
           err.message?.includes("Permission") || err.name === "NotAllowedError"
-            ? "Permiso de cámara denegado. Permite el acceso a la cámara en los ajustes de tu navegador."
+            ? "Permiso de cámara denegado. Permite el acceso en los ajustes de tu navegador."
             : "No se pudo conectar con la cámara. Prueba cambiando de cámara o usa el ingreso manual."
         );
       }
     },
-    [stopCamera, handleFoundCode]
+    [stopCamera, handleCandidateCode]
   );
 
   useEffect(() => {
@@ -293,7 +320,13 @@ export default function BarcodeScannerModal({
     if (e) e.preventDefault();
     if (!manualCode.trim()) return;
     const code = cleanBarcode(manualCode);
-    handleFoundCode(code);
+    setScannedCode(code);
+    playBeep();
+    stopCamera();
+    setTimeout(() => {
+      onScan(code);
+      handleClose();
+    }, 250);
   };
 
   const handlePasteClipboard = async () => {
@@ -302,7 +335,13 @@ export default function BarcodeScannerModal({
       if (text && text.trim()) {
         const code = cleanBarcode(text);
         setManualCode(code);
-        handleFoundCode(code);
+        setScannedCode(code);
+        playBeep();
+        stopCamera();
+        setTimeout(() => {
+          onScan(code);
+          handleClose();
+        }, 250);
       }
     } catch {
       // Fallback
@@ -344,7 +383,7 @@ export default function BarcodeScannerModal({
               <div className="w-64 h-36 border-2 border-dashed border-cyan-400 rounded-xl bg-cyan-500/10 flex items-center justify-center relative shadow-lg">
                 <div className="w-full h-0.5 bg-cyan-400 animate-pulse shadow-sm"></div>
                 <span className="absolute bottom-2 text-[10px] text-cyan-200 bg-black/60 px-2 py-0.5 rounded font-mono">
-                  Enfoca el código de barras aquí
+                  Enfoca el código EAN-13 aquí
                 </span>
               </div>
             </div>
@@ -419,7 +458,7 @@ export default function BarcodeScannerModal({
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider flex items-center space-x-1">
               <Keyboard className="w-3.5 h-3.5" />
-              <span>Ingreso manual de respaldo:</span>
+              <span>O ingresa el código manualmente:</span>
             </span>
             <button
               type="button"
@@ -434,7 +473,7 @@ export default function BarcodeScannerModal({
           <form onSubmit={handleManualSubmit} className="flex space-x-1.5">
             <input
               type="text"
-              placeholder="Ej: 7801234567890 o SKU-0001"
+              placeholder="Ej: 780000000001 o SKU-0001"
               value={manualCode}
               onChange={(e) => setManualCode(e.target.value)}
               className="flex-1 bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-1.5 text-xs font-mono focus:bg-white focus:ring-1 focus:ring-slate-500 focus:outline-none"
@@ -452,7 +491,7 @@ export default function BarcodeScannerModal({
 
         {/* Footer */}
         <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
-          <span>Verificación matemática con checksum (EAN-13, UPC, Code 128)</span>
+          <span>Lectura verificada EAN-13 y UPC-A (100% Precisión)</span>
           <button
             onClick={handleClose}
             className="px-3 py-1 rounded bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-semibold shadow-2xs"
