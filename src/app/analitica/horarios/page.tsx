@@ -13,7 +13,7 @@ import {
 } from "recharts";
 import { Clock, Flame, TrendingUp, BarChart3 } from "lucide-react";
 import { useErp } from "@/context/erp-context";
-import { formatCLP } from "@/lib/utils";
+import { formatCLP, getChileHour } from "@/lib/utils";
 
 export default function AnaliticaHorariosPage() {
   const { ventas } = useErp();
@@ -29,13 +29,13 @@ export default function AnaliticaHorariosPage() {
     ventas.forEach((v) => {
       if (!v.fecha_venta) return;
       try {
-        const date = new Date(v.fecha_venta);
-        const hour = date.getHours();
-        const hourKey = `${hour.toString().padStart(2, "0")}:00`;
-
-        if (hoursMap[hourKey]) {
-          hoursMap[hourKey].ventas += 1;
-          hoursMap[hourKey].totalDinero += Number(v.total || 0);
+        const hour = getChileHour(v.fecha_venta);
+        if (hour !== null) {
+          const hourKey = `${hour.toString().padStart(2, "0")}:00`;
+          if (hoursMap[hourKey]) {
+            hoursMap[hourKey].ventas += 1;
+            hoursMap[hourKey].totalDinero += Number(v.total || 0);
+          }
         }
       } catch {
         // Ignorar

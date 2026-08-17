@@ -41,16 +41,18 @@ export async function POST(req: Request) {
         ? "ENTRADA_COMPRA"
         : "AJUSTE_NEGATIVO");
 
+    const nowIso = new Date().toISOString();
+
     // Ejecutar actualización de stock y registro en Kardex en una transacción atómica
     await db.batch(
       [
         {
-          sql: "UPDATE productos SET stock_actual = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-          args: [newStock, producto_id],
+          sql: "UPDATE productos SET stock_actual = ?, updated_at = ? WHERE id = ?",
+          args: [newStock, nowIso, producto_id],
         },
         {
           sql: `INSERT INTO movimientos_inventario (id, empresa_id, sucursal_id, producto_id, tipo, cantidad, stock_anterior, stock_posterior, motivo, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           args: [
             movId,
             empresa_id || prod.empresa_id || "emp_default",
@@ -61,6 +63,7 @@ export async function POST(req: Request) {
             currentStock,
             newStock,
             motivo || (Number(cantidad) > 0 ? "Recepción de mercadería" : "Ajuste manual"),
+            nowIso,
           ],
         },
       ],

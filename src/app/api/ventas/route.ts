@@ -131,10 +131,12 @@ export async function POST(req: Request) {
     const impuesto = Math.round((baseAmount * 19) / 119);
     const total = baseAmount;
 
+    const nowIso = new Date().toISOString();
+
     // Inserción de la venta principal
     batchStatements.push({
       sql: `INSERT INTO ventas (id, empresa_id, sucursal_id, cliente_id, subtotal, descuento, impuesto, total, metodo_pago, estado, notas, fecha_venta)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETADA', ?, CURRENT_TIMESTAMP)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETADA', ?, ?)`,
       args: [
         ventaId,
         empresa_id || "emp_default",
@@ -146,6 +148,7 @@ export async function POST(req: Request) {
         total,
         metodo_pago,
         notas || null,
+        nowIso,
       ],
     });
 
