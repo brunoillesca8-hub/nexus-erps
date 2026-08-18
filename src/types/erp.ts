@@ -1,8 +1,9 @@
-export type MetodoPago = 'EFECTIVO' | 'TARJETA_DEBITO' | 'TARJETA_CREDITO' | 'TRANSFERENCIA' | 'OTRO';
+export type MetodoPago = 'EFECTIVO' | 'TARJETA_DEBITO' | 'TARJETA_CREDITO' | 'TRANSFERENCIA' | 'SIN_PAGA' | 'OTRO';
 export type EstadoVenta = 'COMPLETADA' | 'ANULADA' | 'PENDIENTE';
 export type TipoMovimiento = 
   | 'ENTRADA_COMPRA'
   | 'SALIDA_VENTA'
+  | 'CONSUMO_PERSONAL'
   | 'AJUSTE_POSITIVO'
   | 'AJUSTE_NEGATIVO'
   | 'MERMA_DANADO'
@@ -121,6 +122,7 @@ export interface DetalleVenta {
   costo_unitario: number;
   subtotal: number;
   descuento?: number;
+  motivo_descuento?: string;
   producto_nombre?: string;
   producto_sku?: number;
 }

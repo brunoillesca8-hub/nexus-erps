@@ -18,6 +18,9 @@ import {
   Percent,
   Tag,
   Cake,
+  Coffee,
+  Sparkles,
+  UserCheck,
 } from "lucide-react";
 import { useErp } from "@/context/erp-context";
 import { formatCLP, matchesSearch } from "@/lib/utils";
@@ -227,15 +230,19 @@ export default function PosPage() {
   }, [productos, selectedCategoria, searchQuery]);
 
   // Cálculos
+  const isSinPaga = metodoPago === "SIN_PAGA";
   const totalItemsCount = cart.reduce((acc, it) => acc + it.cantidad, 0);
   const subtotal = cart.reduce((acc, it) => acc + it.subtotal, 0);
   const totalDescuentosItems = cart.reduce(
     (acc, it) => acc + (it.descuento_unitario || 0) * it.cantidad,
     0
   );
-  const baseImponible = Math.max(0, subtotal - Number(descuentoGeneral || 0));
-  const ivaCalculado = Math.round((baseImponible * 19) / 119);
-  const total = baseImponible;
+
+  const baseImponible = isSinPaga
+    ? 0
+    : Math.max(0, subtotal - Number(descuentoGeneral || 0));
+  const ivaCalculado = isSinPaga ? 0 : Math.round((baseImponible * 19) / 119);
+  const total = isSinPaga ? 0 : baseImponible;
 
   const handleConfirmarVenta = async () => {
     if (cart.length === 0) {
@@ -246,20 +253,27 @@ export default function PosPage() {
     setIsProcessing(true);
     setErrorMessage(null);
 
+    const descTotal = isSinPaga ? subtotal : Number(descuentoGeneral) || 0;
+    const notaFinal = isSinPaga
+      ? `Consumo Personal / Trabajadores (Sin Paga)${notas ? ` - ${notas}` : ""}`
+      : notas || null;
+
     const payload = {
       empresa_id: empresa?.id || "emp_default",
       sucursal_id: sucursales[0]?.id || "suc_default",
-      cliente_id: selectedClienteId || null,
+      cliente_id: isSinPaga ? "cli_personal" : selectedClienteId || null,
       metodo_pago: metodoPago,
-      descuento: Number(descuentoGeneral) || 0,
-      notas: notas || null,
+      descuento: descTotal,
+      notas: notaFinal,
       items: cart.map((it) => ({
         producto_id: it.producto.id,
         cantidad: it.cantidad,
-        precio_unitario: it.precio_unitario,
+        precio_unitario: isSinPaga ? 0 : it.precio_unitario,
         costo_unitario: it.producto.precio_compra || 0,
-        descuento: it.descuento_unitario || 0,
-        motivo_descuento: it.motivo_descuento || undefined,
+        descuento: isSinPaga ? it.precio_unitario : it.descuento_unitario || 0,
+        motivo_descuento: isSinPaga
+          ? "Consumo Personal (100% Bonificado)"
+          : it.motivo_descuento || undefined,
       })),
     };
 
@@ -273,15 +287,16 @@ export default function PosPage() {
         sucursal_id: payload.sucursal_id,
         cliente_id: payload.cliente_id,
         numero_folio: res.folio,
-        subtotal,
-        descuento: (Number(descuentoGeneral) || 0) + totalDescuentosItems,
+        subtotal: isSinPaga ? 0 : subtotal,
+        descuento: isSinPaga ? subtotal : (Number(descuentoGeneral) || 0) + totalDescuentosItems,
         impuesto: ivaCalculado,
-        total,
+        total: isSinPaga ? 0 : total,
         metodo_pago: metodoPago,
         estado: "COMPLETADA",
         fecha_venta: new Date().toISOString(),
-        cliente_nombre:
-          clientes.find((c) => c.id === selectedClienteId)?.nombre || "Consumidor Final",
+        cliente_nombre: isSinPaga
+          ? "Personal / Trabajador (Consumo Interno)"
+          : clientes.find((c) => c.id === selectedClienteId)?.nombre || "Consumidor Final",
       };
 
       setCompletedVenta(nuevaVenta);
@@ -293,24 +308,26 @@ export default function PosPage() {
     }
   };
 
-  // Componente de contenido del Carrito
+  // Componente de contenido del Carrito (Estructura Fija con Scroll Interno)
   const CartContent = (
-    <div className="flex flex-col h-full justify-between">
+    <div className="flex flex-col h-full justify-between overflow-hidden bg-white">
       {/* Header Carrito */}
-      <div className="p-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+      <div className="p-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center space-x-2">
-          <ShoppingCart className="w-4 h-4 text-slate-700" />
-          <h3 className="font-bold text-slate-800 text-sm">Boleta de Venta</h3>
-          {totalItemsCount > 0 && (
-            <span className="px-2 py-0.5 rounded-full bg-[#3a4d6b] text-white text-[10px] font-bold">
-              {totalItemsCount} u.
+          <div className="p-1.5 rounded-lg bg-[#3a4d6b] text-white">
+            <ShoppingCart className="w-3.5 h-3.5" />
+          </div>
+          <div>
+            <h3 className="font-bold text-slate-800 text-xs sm:text-sm">Boleta de Venta</h3>
+            <span className="text-[10px] text-slate-500 font-medium">
+              {totalItemsCount} {totalItemsCount === 1 ? "artículo" : "artículos"} seleccionados
             </span>
-          )}
+          </div>
         </div>
         {cart.length > 0 && (
           <button
             onClick={clearCart}
-            className="text-xs text-rose-600 hover:underline font-medium flex items-center space-x-1"
+            className="text-xs text-rose-600 hover:text-rose-700 font-bold flex items-center space-x-1 px-2 py-1 rounded hover:bg-rose-50 transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />
             <span>Vaciar</span>
@@ -319,12 +336,13 @@ export default function PosPage() {
       </div>
 
       {/* Selector de Cliente */}
-      <div className="px-3.5 py-2 bg-slate-50/50 border-b border-slate-200 flex items-center justify-between text-xs">
-        <label className="text-slate-600 font-medium">Cliente:</label>
+      <div className="px-3 py-1.5 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between text-xs flex-shrink-0">
+        <label className="text-slate-600 font-bold text-[11px]">Cliente:</label>
         <select
           value={selectedClienteId}
           onChange={(e) => setSelectedClienteId(e.target.value)}
-          className="bg-white border border-slate-300 text-slate-800 rounded px-2 py-1 text-xs focus:outline-none max-w-[180px]"
+          disabled={isSinPaga}
+          className="bg-white border border-slate-300 text-slate-800 rounded px-2 py-1 text-xs focus:outline-none max-w-[190px] font-medium disabled:opacity-50"
         >
           <option value="cli_default">Consumidor Final (General)</option>
           {clientes
@@ -337,13 +355,15 @@ export default function PosPage() {
         </select>
       </div>
 
-      {/* Lista de Items */}
-      <div className="flex-1 overflow-y-auto p-3.5 space-y-2 max-h-[300px] lg:max-h-[320px] divide-y divide-slate-100">
+      {/* Lista de Items con Scroll Interno Independiente */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-2.5 divide-y divide-slate-100 min-h-0">
         {cart.length === 0 ? (
-          <div className="h-40 flex flex-col items-center justify-center text-slate-400 text-center">
-            <ShoppingCart className="w-8 h-8 opacity-20 mb-2" />
-            <p className="text-xs font-semibold text-slate-500">Carrito vacío</p>
-            <p className="text-[10px] text-slate-400 mt-0.5">Toca un producto para añadirlo</p>
+          <div className="h-44 flex flex-col items-center justify-center text-slate-400 text-center">
+            <ShoppingCart className="w-9 h-9 opacity-25 mb-2 text-[#3a4d6b]" />
+            <p className="text-xs font-bold text-slate-600">Carrito vacío</p>
+            <p className="text-[11px] text-slate-400 mt-0.5 max-w-[180px]">
+              Toca o escanea un producto para añadirlo al pedido
+            </p>
           </div>
         ) : (
           cart.map((item, idx) => {
@@ -351,148 +371,194 @@ export default function PosPage() {
             const precioEfectivo = item.precio_unitario - (item.descuento_unitario || 0);
 
             return (
-              <div key={item.producto.id} className="pt-2.5 first:pt-0 space-y-1 text-xs">
+              <div key={item.producto.id} className="pt-2 first:pt-0 space-y-1.5 text-xs">
                 <div className="flex items-center justify-between">
                   <div className="flex-1 pr-2 min-w-0">
-                    <p className="font-bold text-slate-900 truncate leading-tight">{item.producto.nombre}</p>
-                    <div className="flex items-center space-x-1.5 text-[11px] text-slate-500">
+                    <p className="font-bold text-slate-900 truncate text-xs leading-tight">
+                      {item.producto.nombre}
+                    </p>
+                    <div className="flex items-center space-x-1.5 text-[11px] text-slate-500 mt-0.5">
                       {hasDiscount ? (
                         <>
                           <span className="line-through text-slate-400 font-mono">
                             {formatCLP(item.precio_unitario)}
                           </span>
-                          <span className="font-bold text-emerald-700 font-mono">
+                          <span className="font-extrabold text-emerald-700 font-mono">
                             {formatCLP(precioEfectivo)} c/u
                           </span>
                         </>
                       ) : (
-                        <span>{formatCLP(item.precio_unitario)} c/u</span>
+                        <span className="font-mono text-slate-600">
+                          {formatCLP(item.precio_unitario)} c/u
+                        </span>
                       )}
                     </div>
                   </div>
 
+                  {/* Cantidad y Subtotal */}
                   <div className="flex items-center space-x-1.5 flex-shrink-0">
-                    <div className="flex items-center rounded border border-slate-300 bg-white">
+                    <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50">
                       <button
                         onClick={() => updateQuantity(item.producto.id, -1)}
-                        className="p-1.5 text-slate-600 hover:bg-slate-100 active:bg-slate-200"
+                        className="p-1 text-slate-600 hover:bg-slate-200 active:bg-slate-300 rounded-l"
                       >
                         <Minus className="w-3 h-3" />
                       </button>
-                      <span className="px-2 font-bold text-slate-800 min-w-[20px] text-center text-xs">
+                      <span className="px-1.5 font-bold text-slate-900 min-w-[20px] text-center text-xs">
                         {item.cantidad}
                       </span>
                       <button
                         onClick={() => updateQuantity(item.producto.id, 1)}
-                        className="p-1.5 text-slate-600 hover:bg-slate-100 active:bg-slate-200"
+                        className="p-1 text-slate-600 hover:bg-slate-200 active:bg-slate-300 rounded-r"
                       >
                         <Plus className="w-3 h-3" />
                       </button>
                     </div>
 
-                    <span className="font-bold text-slate-900 min-w-[60px] text-right font-mono">
-                      {formatCLP(item.subtotal)}
+                    <span className="font-extrabold text-slate-900 min-w-[62px] text-right font-mono text-xs">
+                      {isSinPaga ? "$0" : formatCLP(item.subtotal)}
                     </span>
 
                     <button
                       onClick={() => removeFromCart(item.producto.id)}
-                      className="p-1 text-slate-400 hover:text-rose-600 ml-1"
+                      className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                      title="Quitar producto"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
 
-                {/* Botón de Descuento por Ítem (ej. Pastelería del día anterior) */}
-                <div className="flex items-center justify-between text-[10px] pl-1">
-                  {hasDiscount ? (
-                    <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded font-semibold flex items-center space-x-1">
-                      <Tag className="w-3 h-3" />
-                      <span>{item.motivo_descuento || `Desc: -${formatCLP(item.descuento_unitario || 0)}`}</span>
-                    </span>
-                  ) : (
-                    <span className="text-slate-400">Sin descuento aplicado</span>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => setItemDescuentoModal({ item, index: idx })}
-                    className="text-[#3a4d6b] hover:underline font-bold flex items-center space-x-0.5"
-                  >
-                    <Percent className="w-3 h-3" />
-                    <span>{hasDiscount ? "Modificar Desc." : "+ Descuento (Día Anterior)"}</span>
-                  </button>
-                </div>
+                {/* BOTÓN DE DESCUENTO DESTACADO Y VISIBLE */}
+                {!isSinPaga && (
+                  <div className="flex items-center justify-between pt-0.5">
+                    {hasDiscount ? (
+                      <div className="flex items-center space-x-1 bg-emerald-50 border border-emerald-300 text-emerald-900 px-2 py-0.5 rounded-md text-[10px] font-bold shadow-2xs">
+                        <Sparkles className="w-3 h-3 text-emerald-600" />
+                        <span>{item.motivo_descuento || `Desc: -${formatCLP(item.descuento_unitario || 0)}`}</span>
+                        <button
+                          type="button"
+                          onClick={() => setItemDescuentoModal({ item, index: idx })}
+                          className="text-blue-700 underline font-extrabold ml-1 hover:text-blue-900"
+                        >
+                          Cambiar
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setItemDescuentoModal({ item, index: idx })}
+                        className="flex items-center space-x-1 px-2.5 py-1 rounded-md bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 text-[10.5px] font-extrabold shadow-2xs transition-all hover:scale-101"
+                      >
+                        <Cake className="w-3.5 h-3.5 text-amber-700" />
+                        <span>% Aplicar Descuento (Día Anterior)</span>
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })
         )}
       </div>
 
-      {/* Métodos de Pago & Totales */}
-      <div className="p-3.5 bg-slate-50 border-t border-slate-200 space-y-2.5">
+      {/* FOOTER FIJO: Métodos de Pago, Totales y BOTÓN CONFIRMAR VENTA (SIEMPRE VISIBLE ABAJO) */}
+      <div className="p-3 bg-slate-50 border-t border-slate-200 space-y-2 flex-shrink-0 shadow-inner">
+        {/* Selector de Método de Pago con botón "Sin Paga (Trabajadores)" */}
         <div className="space-y-1">
-          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
-            Método de Pago
+          <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block">
+            Método de Pago / Destino
           </span>
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-3 gap-1">
             {[
               { id: "EFECTIVO", label: "Efectivo", icon: Banknote },
               { id: "TARJETA_DEBITO", label: "Débito", icon: CreditCard },
               { id: "TARJETA_CREDITO", label: "Crédito", icon: CreditCard },
               { id: "TRANSFERENCIA", label: "Transf.", icon: Smartphone },
+              { id: "SIN_PAGA", label: "Sin Paga (Personal)", icon: Coffee, highlight: true },
             ].map((m) => {
               const Icon = m.icon;
               const isSelected = metodoPago === m.id;
+              const isSinPagaBtn = m.id === "SIN_PAGA";
+
               return (
                 <button
                   key={m.id}
                   type="button"
                   onClick={() => setMetodoPago(m.id as MetodoPago)}
-                  className={`flex items-center justify-center space-x-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  className={`flex items-center justify-center space-x-1 px-1.5 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
                     isSelected
-                      ? "bg-[#3a4d6b] text-white shadow-2xs"
+                      ? isSinPagaBtn
+                        ? "bg-amber-600 text-white shadow-xs col-span-2"
+                        : "bg-[#3a4d6b] text-white shadow-xs"
+                      : isSinPagaBtn
+                      ? "bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 col-span-2"
                       : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-300"
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span>{m.label}</span>
+                  <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="truncate">{m.label}</span>
                 </button>
               );
             })}
           </div>
         </div>
 
-        <div className="pt-1.5 border-t border-slate-200 space-y-1 text-xs">
+        {/* Alerta de Consumo Personal Sin Paga */}
+        {isSinPaga && (
+          <div className="p-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold flex items-center space-x-1.5">
+            <UserCheck className="w-4 h-4 text-amber-700 flex-shrink-0" />
+            <span>Consumo de trabajadores: Stock se descuenta, total $0.</span>
+          </div>
+        )}
+
+        {/* Resumen de Totales */}
+        <div className="pt-1.5 border-t border-slate-200 space-y-0.5 text-xs">
           <div className="flex justify-between text-slate-600">
             <span>Subtotal:</span>
             <span className="font-mono">{formatCLP(subtotal)}</span>
           </div>
-          {totalDescuentosItems > 0 && (
-            <div className="flex justify-between text-emerald-700 font-semibold">
-              <span>Descuentos Ítems:</span>
+          {totalDescuentosItems > 0 && !isSinPaga && (
+            <div className="flex justify-between text-emerald-700 font-bold">
+              <span>Descuentos Día Anterior:</span>
               <span className="font-mono">-{formatCLP(totalDescuentosItems)}</span>
             </div>
           )}
-          <div className="flex justify-between text-slate-600">
-            <span>IVA (19% inc.):</span>
-            <span className="font-mono">{formatCLP(ivaCalculado)}</span>
-          </div>
-          <div className="flex justify-between items-baseline pt-1 border-t border-slate-200 font-bold text-slate-900">
-            <span className="text-xs">TOTAL:</span>
-            <span className="text-lg font-mono text-slate-900">{formatCLP(total)}</span>
+          {isSinPaga ? (
+            <div className="flex justify-between text-amber-800 font-bold">
+              <span>Bonificación Trabajadores:</span>
+              <span className="font-mono">-{formatCLP(subtotal)}</span>
+            </div>
+          ) : (
+            <div className="flex justify-between text-slate-600">
+              <span>IVA (19% inc.):</span>
+              <span className="font-mono">{formatCLP(ivaCalculado)}</span>
+            </div>
+          )}
+          <div className="flex justify-between items-baseline pt-1 border-t border-slate-300 font-extrabold text-slate-900">
+            <span className="text-xs">TOTAL A COBRAR:</span>
+            <span className={`text-lg font-mono ${isSinPaga ? "text-amber-700" : "text-slate-900"}`}>
+              {isSinPaga ? "$0 CLP (Sin Paga)" : formatCLP(total)}
+            </span>
           </div>
         </div>
 
+        {/* BOTÓN PRINCIPAL DE CONFIRMACIÓN */}
         <button
           disabled={cart.length === 0 || isProcessing}
           onClick={handleConfirmarVenta}
-          className="w-full py-3 rounded-lg bg-[#3a4d6b] hover:bg-slate-700 text-white font-bold text-xs shadow-xs transition-colors disabled:opacity-40 flex items-center justify-center space-x-2 active:scale-98"
+          className={`w-full py-3 rounded-xl text-white font-extrabold text-xs sm:text-sm shadow-md transition-all disabled:opacity-40 flex items-center justify-center space-x-2 active:scale-98 cursor-pointer ${
+            isSinPaga
+              ? "bg-amber-600 hover:bg-amber-700"
+              : "bg-[#3a4d6b] hover:bg-slate-700"
+          }`}
         >
           <CheckCircle2 className="w-4 h-4" />
           <span>
             {isProcessing
-              ? "Procesando en Turso..."
+              ? "Registrando Venta en Turso..."
+              : isSinPaga
+              ? `Registrar Consumo Personal • $0`
               : `Confirmar Venta • ${formatCLP(total)}`}
           </span>
         </button>
@@ -501,17 +567,19 @@ export default function PosPage() {
   );
 
   return (
-    <div className="space-y-3 max-w-full">
-      {/* SECCIÓN PRINCIPAL: Catálogo de Productos POS */}
-      <div className="flex flex-col lg:flex-row gap-4">
-        <div className="flex-1 flex flex-col space-y-3 min-w-0">
-          {/* Barra de Búsqueda y Botón Escáner */}
-          <div className="bg-white border border-slate-200 p-2.5 rounded-lg shadow-2xs flex gap-2 items-center">
+    <div className="h-[calc(100vh-5.5rem)] flex flex-col overflow-hidden max-w-full">
+      {/* SECCIÓN PRINCIPAL: Grid fija para que el carrito nunca se desplace al fondo */}
+      <div className="flex-1 flex flex-col lg:flex-row gap-3 overflow-hidden min-h-0">
+        
+        {/* PANEL IZQUIERDO: Buscador, Categorías y Grid de Productos con Scroll Propio */}
+        <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden space-y-2.5">
+          {/* Barra de Búsqueda y Botón Escáner (Fijo Arriba) */}
+          <div className="bg-white border border-slate-200 p-2 rounded-xl shadow-2xs flex gap-2 items-center flex-shrink-0">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-cyan-600 absolute left-3 top-2.5" />
               <input
                 type="text"
-                placeholder="Buscar por SKU, Nombre o Código..."
+                placeholder="Buscar por SKU, Nombre o Código de barras..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 pl-9 pr-3 py-1.5 rounded-lg text-xs sm:text-sm focus:bg-white focus:ring-1 focus:ring-slate-500 focus:outline-none"
@@ -520,18 +588,18 @@ export default function PosPage() {
 
             <button
               onClick={() => setIsScannerOpen(true)}
-              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold border border-slate-300 flex-shrink-0 transition-colors"
+              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-300 flex-shrink-0 transition-colors"
             >
               <Camera className="w-3.5 h-3.5 text-slate-600" />
               <span className="hidden sm:inline">Escanear</span>
             </button>
           </div>
 
-          {/* Categorías Tabs (Incluye Pastelería destacada) */}
-          <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 scrollbar-none">
+          {/* Categorías Tabs (Fijo Arriba) */}
+          <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 scrollbar-none flex-shrink-0">
             <button
               onClick={() => setSelectedCategoria("ALL")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
                 selectedCategoria === "ALL"
                   ? "bg-[#3a4d6b] text-white shadow-2xs"
                   : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
@@ -545,15 +613,15 @@ export default function PosPage() {
                 <button
                   key={c.id}
                   onClick={() => setSelectedCategoria(c.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors flex items-center space-x-1 ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center space-x-1 ${
                     selectedCategoria === c.id
                       ? "bg-[#3a4d6b] text-white shadow-2xs"
                       : isPasteleria
-                      ? "bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-200 font-bold"
+                      ? "bg-amber-100 text-amber-950 hover:bg-amber-200 border border-amber-300 font-extrabold"
                       : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
                   }`}
                 >
-                  {isPasteleria && <Cake className="w-3.5 h-3.5 text-amber-600" />}
+                  {isPasteleria && <Cake className="w-3.5 h-3.5 text-amber-700" />}
                   <span>{c.nombre}</span>
                 </button>
               );
@@ -562,7 +630,7 @@ export default function PosPage() {
 
           {/* Toast de confirmación de escaneo */}
           {scanSuccessMsg && (
-            <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center space-x-2 animate-fadeIn shadow-2xs">
+            <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-bold flex items-center space-x-2 animate-fadeIn shadow-2xs flex-shrink-0">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
               <span>{scanSuccessMsg}</span>
             </div>
@@ -570,7 +638,7 @@ export default function PosPage() {
 
           {/* Mensaje de Error */}
           {errorMessage && (
-            <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center justify-between animate-fadeIn">
+            <div className="p-2 rounded-lg bg-rose-50 border border-rose-300 text-rose-800 text-xs font-bold flex items-center justify-between animate-fadeIn flex-shrink-0">
               <span>{errorMessage}</span>
               <button onClick={() => setErrorMessage(null)}>
                 <X className="w-3.5 h-3.5" />
@@ -578,95 +646,102 @@ export default function PosPage() {
             </div>
           )}
 
-          {/* Grid de Productos */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2.5 flex-1 overflow-y-auto">
+          {/* Grid de Productos con Scroll Propio (Nunca empuja el carrito hacia abajo) */}
+          <div className="flex-1 overflow-y-auto pr-1 min-h-0">
             {filteredProductos.length === 0 ? (
-              <div className="col-span-full py-12 flex flex-col items-center justify-center text-slate-400 text-center bg-white rounded-lg border border-dashed border-slate-200">
+              <div className="h-64 flex flex-col items-center justify-center text-slate-400 text-center bg-white rounded-xl border border-dashed border-slate-300">
                 <Package className="w-10 h-10 opacity-30 mb-2" />
-                <p className="text-xs font-semibold text-slate-600">No se encontraron productos</p>
-                <p className="text-[10px] text-slate-400 mt-0.5">Prueba con otra búsqueda o categoría</p>
+                <p className="text-xs font-bold text-slate-700">No se encontraron productos</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Prueba con otra búsqueda o categoría</p>
               </div>
             ) : (
-              filteredProductos.map((p) => {
-                const stockActual = Number(p.stock_actual) || 0;
-                const isOutOfStock = stockActual <= 0;
-                const isLowStock = stockActual <= p.stock_minimo && !isOutOfStock;
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5 pb-20 lg:pb-3">
+                {filteredProductos.map((p) => {
+                  const stockActual = Number(p.stock_actual) || 0;
+                  const isOutOfStock = stockActual <= 0;
+                  const isLowStock = stockActual <= p.stock_minimo && !isOutOfStock;
+                  const isPastry = p.categoria_id === "cat_pasteleria";
 
-                return (
-                  <div
-                    key={p.id}
-                    onClick={() => !isOutOfStock && addToCart(p)}
-                    className={`bg-white border rounded-lg p-3 flex flex-col justify-between transition-all cursor-pointer select-none relative ${
-                      isOutOfStock
-                        ? "border-slate-200 opacity-50 cursor-not-allowed bg-slate-50"
-                        : "border-slate-200 hover:border-[#3a4d6b] hover:shadow-xs active:scale-98"
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1 font-mono">
-                        <span className="font-bold text-slate-600">{p.codigo_barras || p.sku}</span>
-                        <span
-                          className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => !isOutOfStock && addToCart(p)}
+                      className={`bg-white border rounded-xl p-3 flex flex-col justify-between transition-all cursor-pointer select-none relative ${
+                        isOutOfStock
+                          ? "border-slate-200 opacity-50 cursor-not-allowed bg-slate-50"
+                          : isPastry
+                          ? "border-amber-200 hover:border-amber-400 hover:shadow-xs active:scale-98 bg-amber-50/20"
+                          : "border-slate-200 hover:border-[#3a4d6b] hover:shadow-xs active:scale-98"
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between text-[10.5px] text-slate-400 mb-1 font-mono">
+                          <span className="font-bold text-slate-600 truncate">{p.codigo_barras || p.sku}</span>
+                          <span
+                            className={`px-1.5 py-0.2 rounded text-[9.5px] font-extrabold ${
+                              isOutOfStock
+                                ? "bg-rose-100 text-rose-800"
+                                : isLowStock
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-slate-100 text-slate-700"
+                            }`}
+                          >
+                            {stockActual} u.
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-slate-900 text-xs leading-snug line-clamp-2">
+                          {p.nombre}
+                        </h4>
+                      </div>
+
+                      <div className="flex items-baseline justify-between mt-2.5 pt-2 border-t border-slate-100">
+                        <span className="text-xs sm:text-sm font-extrabold font-mono text-slate-900">
+                          {formatCLP(p.precio_venta)}
+                        </span>
+                        <button
+                          disabled={isOutOfStock}
+                          className={`p-1.5 rounded-lg transition-colors shadow-2xs ${
                             isOutOfStock
-                              ? "bg-rose-50 text-rose-700"
-                              : isLowStock
-                              ? "bg-amber-50 text-amber-700"
-                              : "bg-slate-100 text-slate-600"
+                              ? "bg-slate-100 text-slate-400"
+                              : "bg-[#3a4d6b] text-white hover:bg-slate-700"
                           }`}
                         >
-                          {stockActual} u.
-                        </span>
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                      <h4 className="font-bold text-slate-900 text-xs leading-snug break-words">
-                        {p.nombre}
-                      </h4>
                     </div>
-
-                    <div className="flex items-baseline justify-between mt-3 pt-2 border-t border-slate-100">
-                      <span className="text-xs font-bold font-mono text-slate-900">
-                        {formatCLP(p.precio_venta)}
-                      </span>
-                      <button
-                        disabled={isOutOfStock}
-                        className={`p-1.5 rounded-md transition-colors ${
-                          isOutOfStock
-                            ? "bg-slate-100 text-slate-400"
-                            : "bg-[#3a4d6b] text-white hover:bg-slate-700"
-                        }`}
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
 
-        {/* PANEL DERECHO DESKTOP: Carrito Fijo */}
-        <div className="hidden lg:flex w-80 xl:w-96 bg-white border border-slate-200 rounded-lg shadow-2xs flex-col flex-shrink-0">
+        {/* PANEL DERECHO DESKTOP: Carrito Fijo 100% visible sin scroll de página */}
+        <div className="hidden lg:flex w-80 xl:w-96 bg-white border border-slate-200 rounded-xl shadow-xs flex-col h-full overflow-hidden flex-shrink-0">
           {CartContent}
         </div>
       </div>
 
-      {/* BARRA FLOTANTE MÓVIL (Bottom Sticky Bar) */}
+      {/* BARRA FLOTANTE MÓVIL (Sticky Bottom Bar) */}
       {cart.length > 0 && (
-        <div className="lg:hidden fixed bottom-14 left-0 right-0 p-3 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-xl z-40">
-          <div className="flex items-center justify-between gap-3">
+        <div className="lg:hidden fixed bottom-0 left-0 right-0 p-3 bg-white/95 backdrop-blur-md border-t border-slate-300 shadow-2xl z-40">
+          <div className="flex items-center justify-between gap-3 max-w-lg mx-auto">
             <button
               onClick={() => setIsMobileCartOpen(true)}
               className="flex items-center space-x-2 text-slate-800"
             >
               <div className="relative">
                 <ShoppingCart className="w-5 h-5 text-[#3a4d6b]" />
-                <span className="absolute -top-1.5 -right-1.5 bg-rose-600 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                <span className="absolute -top-1.5 -right-1.5 bg-rose-600 text-white text-[10px] font-extrabold rounded-full w-4 h-4 flex items-center justify-center">
                   {totalItemsCount}
                 </span>
               </div>
               <div className="text-left">
-                <span className="text-[10px] text-slate-400 block font-semibold">Total a Cobrar</span>
-                <span className="font-bold text-sm font-mono text-slate-900">{formatCLP(total)}</span>
+                <span className="text-[10px] text-slate-500 block font-bold">Total Pedido</span>
+                <span className="font-extrabold text-sm font-mono text-slate-900">
+                  {isSinPaga ? "$0 (Sin Paga)" : formatCLP(total)}
+                </span>
               </div>
               <ChevronUp className="w-4 h-4 text-slate-400" />
             </button>
@@ -674,9 +749,9 @@ export default function PosPage() {
             <button
               disabled={isProcessing}
               onClick={() => setIsMobileCartOpen(true)}
-              className="px-4 py-2 rounded-lg bg-[#3a4d6b] text-white font-bold text-xs shadow-xs"
+              className="px-5 py-2.5 rounded-xl bg-[#3a4d6b] text-white font-extrabold text-xs shadow-md"
             >
-              Ver Boleta
+              Ver Boleta & Cobrar
             </button>
           </div>
         </div>
@@ -685,9 +760,9 @@ export default function PosPage() {
       {/* DRAWER MÓVIL COMPLETO DE CARRITO */}
       {isMobileCartOpen && (
         <div className="lg:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col justify-end animate-fadeIn">
-          <div className="bg-white rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+          <div className="bg-white rounded-t-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between p-3 border-b border-slate-200 bg-slate-50">
-              <span className="font-bold text-xs text-slate-700">Resumen de Venta</span>
+              <span className="font-bold text-xs text-slate-700">Resumen y Cobro de Venta</span>
               <button
                 onClick={() => setIsMobileCartOpen(false)}
                 className="p-1 rounded-full text-slate-400 hover:bg-slate-200"
@@ -700,13 +775,13 @@ export default function PosPage() {
         </div>
       )}
 
-      {/* MODAL DESCUENTO INDIVIDUAL POR PRODUCTO (Pastelería día anterior, etc.) */}
+      {/* MODAL DESCUENTO INDIVIDUAL POR PRODUCTO */}
       {itemDescuentoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs animate-fadeIn">
-          <div className="relative w-full max-w-sm bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+          <div className="relative w-full max-w-sm bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
               <div className="flex items-center space-x-2">
-                <Tag className="w-4 h-4 text-[#3a4d6b]" />
+                <Cake className="w-4 h-4 text-amber-700" />
                 <h3 className="font-bold text-xs sm:text-sm text-slate-900">
                   Descuento por Producto
                 </h3>
@@ -720,21 +795,21 @@ export default function PosPage() {
             </div>
 
             <div className="p-4 space-y-3">
-              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
                 <span className="font-bold text-slate-900 block truncate">
                   {itemDescuentoModal.item.producto.nombre}
                 </span>
                 <span className="text-slate-500">
-                  Precio normal: <b className="font-mono">{formatCLP(itemDescuentoModal.item.precio_unitario)}</b>
+                  Precio venta regular: <b className="font-mono text-slate-800">{formatCLP(itemDescuentoModal.item.precio_unitario)}</b>
                 </span>
               </div>
 
-              {/* Botones de Descuento Rápido (Pastelería Día Anterior) */}
+              {/* Opciones de Descuento Rápido */}
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-600 block">
-                  Descuentos Rápidos (Pastelería / Rotación):
+                <label className="text-[11px] font-extrabold text-slate-700 block">
+                  Selecciona el Descuento para este producto:
                 </label>
-                <div className="grid grid-cols-2 gap-1.5">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -746,10 +821,10 @@ export default function PosPage() {
                         30
                       );
                     }}
-                    className="p-2 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 text-xs font-bold text-left transition-colors"
+                    className="p-2.5 rounded-xl bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-950 text-xs font-bold text-left transition-colors shadow-2xs"
                   >
                     <span>🍰 Día Anterior -30%</span>
-                    <span className="block text-[10px] text-amber-700 font-mono font-normal">
+                    <span className="block text-[10px] text-amber-800 font-mono font-semibold">
                       Queda en: {formatCLP(itemDescuentoModal.item.precio_unitario * 0.7)}
                     </span>
                   </button>
@@ -765,10 +840,10 @@ export default function PosPage() {
                         20
                       );
                     }}
-                    className="p-2 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 text-xs font-bold text-left transition-colors"
+                    className="p-2.5 rounded-xl bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-950 text-xs font-bold text-left transition-colors shadow-2xs"
                   >
                     <span>🍰 Día Anterior -20%</span>
-                    <span className="block text-[10px] text-amber-700 font-mono font-normal">
+                    <span className="block text-[10px] text-amber-800 font-mono font-semibold">
                       Queda en: {formatCLP(itemDescuentoModal.item.precio_unitario * 0.8)}
                     </span>
                   </button>
@@ -784,10 +859,10 @@ export default function PosPage() {
                         50
                       );
                     }}
-                    className="p-2 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-900 text-xs font-bold text-left transition-colors"
+                    className="p-2.5 rounded-xl bg-rose-100 hover:bg-rose-200 border border-rose-300 text-rose-950 text-xs font-bold text-left transition-colors shadow-2xs"
                   >
                     <span>🔥 Liquidación -50%</span>
-                    <span className="block text-[10px] text-rose-700 font-mono font-normal">
+                    <span className="block text-[10px] text-rose-800 font-mono font-semibold">
                       Queda en: {formatCLP(itemDescuentoModal.item.precio_unitario * 0.5)}
                     </span>
                   </button>
@@ -797,11 +872,11 @@ export default function PosPage() {
                     onClick={() => {
                       applyItemDiscount(itemDescuentoModal.item.producto.id, 0);
                     }}
-                    className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold text-left transition-colors"
+                    className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 text-xs font-bold text-left transition-colors shadow-2xs"
                   >
                     <span>↺ Sin Descuento</span>
                     <span className="block text-[10px] text-slate-500 font-mono font-normal">
-                      Precio completo
+                      Precio normal
                     </span>
                   </button>
                 </div>
@@ -830,6 +905,7 @@ export default function PosPage() {
           cantidad: it.cantidad,
           precio_unitario: it.precio_unitario,
           descuento_unitario: it.descuento ? Math.round(it.descuento / it.cantidad) : 0,
+          motivo_descuento: it.motivo_descuento || undefined,
           subtotal: it.subtotal,
         }))}
       />
