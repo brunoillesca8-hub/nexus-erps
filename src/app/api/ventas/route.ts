@@ -46,7 +46,16 @@ export async function GET(req: Request) {
       LIMIT 300
     `);
 
-    return NextResponse.json({ ventas: ventasRes.rows });
+    const formatVentaRow = (v: any) => ({
+      ...v,
+      metodo_pago:
+        v.metodo_pago === "OTRO" &&
+        (v.notas?.includes("Sin Paga") || v.notas?.includes("Consumo Personal"))
+          ? "SIN_PAGA"
+          : v.metodo_pago,
+    });
+
+    return NextResponse.json({ ventas: ventasRes.rows.map(formatVentaRow) });
   } catch (error: any) {
     console.error("Error al obtener ventas:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -123,7 +132,7 @@ export async function POST(req: Request) {
         cantidad: item.cantidad,
         stock_anterior: currentStock,
         stock_posterior: newStock,
-        motivo: `Venta POS`,
+        motivo: metodo_pago === "SIN_PAGA" ? "Consumo Personal / Trabajadores (Sin Paga)" : `Venta POS`,
         venta_id: ventaId,
       });
     }
@@ -131,10 +140,14 @@ export async function POST(req: Request) {
     // Calcular IVA (19% en Chile) y Total
     const baseAmount = subtotal - descuento;
     // Impuesto incluido o calculado (19%)
-    const impuesto = Math.round((baseAmount * 19) / 119);
+    const impuesto = metodo_pago === "SIN_PAGA" ? 0 : Math.round((baseAmount * 19) / 119);
     const total = baseAmount;
 
     const nowIso = new Date().toISOString();
+    const dbMetodoPago = metodo_pago === "SIN_PAGA" ? "OTRO" : (metodo_pago || "EFECTIVO");
+    const dbNotas = metodo_pago === "SIN_PAGA"
+      ? (notas ? `Consumo Personal / Trabajadores (Sin Paga) - ${notas}` : "Consumo Personal / Trabajadores (Sin Paga)")
+      : (notas || null);
 
     // Inserción de la venta principal
     batchStatements.push({
@@ -149,8 +162,8 @@ export async function POST(req: Request) {
         descuento,
         impuesto,
         total,
-        metodo_pago,
-        notas || null,
+        dbMetodoPago,
+        dbNotas,
         nowIso,
       ],
     });
