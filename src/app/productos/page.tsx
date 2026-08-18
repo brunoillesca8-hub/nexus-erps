@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useErp } from "@/context/erp-context";
-import { formatCLP, matchesSearch } from "@/lib/utils";
+import { formatCLP, matchesSearch, isPastryLeftover } from "@/lib/utils";
 import ModalProducto from "@/components/ModalProducto";
 import ModalReponerStock from "@/components/ModalReponerStock";
 import ModalImportarFactura from "@/components/ModalImportarFactura";
@@ -38,7 +38,7 @@ export default function ProductosPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategoria, setSelectedCategoria] = useState("ALL");
   const [stockFilter, setStockFilter] = useState<
-    "ALL" | "CRITICO" | "AGOTADO" | "OPTIMO" | "POR_VENCER" | "VENCIDOS"
+    "ALL" | "SOBRANTES_PASTELERIA" | "CRITICO" | "AGOTADO" | "OPTIMO" | "POR_VENCER" | "VENCIDOS"
   >("ALL");
 
   // Estrategia de Organización (FIFO, FEFO, ESTANDAR)
@@ -95,6 +95,8 @@ export default function ProductosPage() {
       return exp.status === "VENCIDO";
     });
 
+    const sobrantes = productos.filter(isPastryLeftover);
+
     return {
       total: productos.length,
       criticos: criticos.length,
@@ -102,6 +104,7 @@ export default function ProductosPage() {
       optimos: optimos.length,
       porVencer: porVencer.length,
       vencidos: vencidos.length,
+      sobrantesPasteleria: sobrantes.length,
     };
   }, [productos]);
 
@@ -157,7 +160,9 @@ export default function ProductosPage() {
       let matchFilter = true;
       const expStatus = getExpirationStatus(p.fecha_vencimiento);
 
-      if (stockFilter === "CRITICO") {
+      if (stockFilter === "SOBRANTES_PASTELERIA") {
+        matchFilter = isPastryLeftover(p);
+      } else if (stockFilter === "CRITICO") {
         matchFilter = p.stock_actual <= p.stock_minimo && p.stock_actual > 0;
       } else if (stockFilter === "AGOTADO") {
         matchFilter = p.stock_actual <= 0;
@@ -407,6 +412,22 @@ export default function ProductosPage() {
             }`}
           >
             Todos ({stats.total})
+          </button>
+
+          {/* Filtro Sobrantes Pastelería */}
+          <button
+            onClick={() => {
+              setStockFilter("SOBRANTES_PASTELERIA");
+              setCurrentPage(1);
+            }}
+            className={`px-2.5 py-1 rounded-md text-xs font-bold whitespace-nowrap transition-all flex items-center space-x-1 ${
+              stockFilter === "SOBRANTES_PASTELERIA"
+                ? "bg-amber-600 text-white shadow-xs scale-102"
+                : "bg-amber-100 text-amber-950 hover:bg-amber-200 border border-amber-300"
+            }`}
+          >
+            <Clock className="w-3 h-3 text-amber-900" />
+            <span>⏳ Sobrantes Pastelería ({stats.sobrantesPasteleria})</span>
           </button>
 
           <button

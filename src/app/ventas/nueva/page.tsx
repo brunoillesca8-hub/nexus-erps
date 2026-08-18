@@ -18,12 +18,12 @@ import {
   Percent,
   Tag,
   Cake,
-  Coffee,
+  Clock,
   Sparkles,
-  UserCheck,
+  Flame,
 } from "lucide-react";
 import { useErp } from "@/context/erp-context";
-import { formatCLP, matchesSearch } from "@/lib/utils";
+import { formatCLP, matchesSearch, isPastryLeftover } from "@/lib/utils";
 import BarcodeScannerModal from "@/components/BarcodeScannerModal";
 import TicketModal from "@/components/TicketModal";
 import { useBarcodeListener } from "@/hooks/useBarcodeListener";
@@ -41,6 +41,9 @@ export default function PosPage() {
   const [descuentoGeneral, setDescuentoGeneral] = useState<number>(0);
   const [notas, setNotas] = useState<string>("");
 
+  // Descuento automático configurable para Sobrantes de Pastelería (20%, 30%, 50%)
+  const [sobranteDiscountPercent, setSobranteDiscountPercent] = useState<20 | 30 | 50>(30);
+
   // Modales y Drawer Móvil
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
@@ -50,7 +53,7 @@ export default function PosPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [scanSuccessMsg, setScanSuccessMsg] = useState<string | null>(null);
 
-  // Modal de descuento individual por item
+  // Modal de descuento individual manual por item
   const [itemDescuentoModal, setItemDescuentoModal] = useState<{
     item: CartItem;
     index: number;
@@ -74,12 +77,34 @@ export default function PosPage() {
     }
   };
 
-  const addToCart = (producto: Producto, cantidad = 1) => {
+  // Identificar automáticamente los sobrantes de pastelería
+  const leftoverPastries = useMemo(() => {
+    return productos.filter(isPastryLeftover);
+  }, [productos]);
+
+  const addToCart = (producto: Producto, cantidad = 1, forceDiscountPercent?: number) => {
     if (producto.stock_actual <= 0) {
       setErrorMessage(`El producto "${producto.nombre}" no tiene stock disponible.`);
       setTimeout(() => setErrorMessage(null), 3000);
       return;
     }
+
+    // Determinar si aplica descuento automático por ser de la sección Sobrantes
+    const isAutoSobrante =
+      forceDiscountPercent !== undefined ||
+      (selectedCategoria === "SOBRANTES_PASTELERIA" && isPastryLeftover(producto));
+
+    const discountPct = isAutoSobrante
+      ? forceDiscountPercent ?? sobranteDiscountPercent
+      : 0;
+
+    const autoDescUnit = discountPct > 0
+      ? Math.round(producto.precio_venta * (discountPct / 100))
+      : 0;
+
+    const autoMotivo = discountPct > 0
+      ? `Pastel día anterior (-${discountPct}%)`
+      : undefined;
 
     setCart((prevCart) => {
       const existingIndex = prevCart.findIndex((item) => item.producto.id === producto.id);
@@ -91,12 +116,17 @@ export default function PosPage() {
           setTimeout(() => setErrorMessage(null), 3000);
           return prevCart;
         }
+
+        const effectiveDescUnit = autoDescUnit > 0 ? autoDescUnit : (item.descuento_unitario || 0);
+        const effectiveMotivo = autoMotivo || item.motivo_descuento;
+
         const updated = [...prevCart];
-        const descUnit = item.descuento_unitario || 0;
         updated[existingIndex] = {
           ...item,
           cantidad: newQty,
-          subtotal: Math.max(0, (item.precio_unitario - descUnit) * newQty),
+          descuento_unitario: effectiveDescUnit,
+          motivo_descuento: effectiveMotivo,
+          subtotal: Math.max(0, (item.precio_unitario - effectiveDescUnit) * newQty),
         };
         return updated;
       } else {
@@ -106,8 +136,10 @@ export default function PosPage() {
             producto,
             cantidad,
             precio_unitario: producto.precio_venta,
-            descuento_unitario: 0,
-            subtotal: producto.precio_venta * cantidad,
+            descuento_unitario: autoDescUnit,
+            descuento_porcentaje: discountPct > 0 ? discountPct : undefined,
+            motivo_descuento: autoMotivo,
+            subtotal: Math.max(0, (producto.precio_venta - autoDescUnit) * cantidad),
           },
         ];
       }
@@ -197,7 +229,9 @@ export default function PosPage() {
       });
 
       if (found) {
-        addToCart(found, 1);
+        // Si está en la pestaña de Sobrantes, aplicar automáticamente el descuento seleccionado
+        const isLeftover = selectedCategoria === "SOBRANTES_PASTELERIA" && isPastryLeftover(found);
+        addToCart(found, 1, isLeftover ? sobranteDiscountPercent : undefined);
         playScanBeep();
         setScanSuccessMsg(`✅ Agregado: ${found.nombre} (${formatCLP(found.precio_venta)})`);
         setTimeout(() => setScanSuccessMsg(null), 3000);
@@ -206,7 +240,7 @@ export default function PosPage() {
         setTimeout(() => setErrorMessage(null), 3500);
       }
     },
-    [productos]
+    [productos, selectedCategoria, sobranteDiscountPercent]
   );
 
   // Hook universal para pistolas USB y apps Wi-Fi
@@ -219,12 +253,18 @@ export default function PosPage() {
   // Filtro de productos
   const filteredProductos = useMemo(() => {
     return productos.filter((p) => {
-      const matchCat =
-        selectedCategoria === "ALL" || p.categoria_id === selectedCategoria;
+      let matchCat = true;
+      if (selectedCategoria === "SOBRANTES_PASTELERIA") {
+        matchCat = isPastryLeftover(p);
+      } else if (selectedCategoria !== "ALL") {
+        matchCat = p.categoria_id === selectedCategoria;
+      }
+
       const matchSearch =
         matchesSearch(p.nombre, searchQuery) ||
         (p.codigo_barras && p.codigo_barras.includes(searchQuery)) ||
         p.sku.toString().includes(searchQuery);
+
       return matchCat && matchSearch;
     });
   }, [productos, selectedCategoria, searchQuery]);
@@ -554,8 +594,21 @@ export default function PosPage() {
             </button>
           </div>
 
-          {/* Categorías Tabs (Fijo Arriba) */}
+          {/* Categorías Tabs (Incluye Pestaña Destacada de Sobrantes Día Anterior) */}
           <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 scrollbar-none flex-shrink-0">
+            {/* Pestaña Sobrantes Día Anterior Automática */}
+            <button
+              onClick={() => setSelectedCategoria("SOBRANTES_PASTELERIA")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-extrabold whitespace-nowrap transition-all flex items-center space-x-1.5 shadow-xs ${
+                selectedCategoria === "SOBRANTES_PASTELERIA"
+                  ? "bg-amber-600 text-white ring-2 ring-amber-300 scale-102"
+                  : "bg-amber-100 text-amber-950 hover:bg-amber-200 border border-amber-300"
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-900" />
+              <span>⏳ Sobrantes Día Anterior ({leftoverPastries.length})</span>
+            </button>
+
             <button
               onClick={() => setSelectedCategoria("ALL")}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
@@ -566,6 +619,7 @@ export default function PosPage() {
             >
               Todos ({productos.length})
             </button>
+
             {categorias.map((c) => {
               const isPasteleria = c.id === "cat_pasteleria" || c.nombre.toLowerCase().includes("pastel");
               return (
@@ -576,7 +630,7 @@ export default function PosPage() {
                     selectedCategoria === c.id
                       ? "bg-[#3a4d6b] text-white shadow-2xs"
                       : isPasteleria
-                      ? "bg-amber-100 text-amber-950 hover:bg-amber-200 border border-amber-300 font-extrabold"
+                      ? "bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-200 font-extrabold"
                       : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
                   }`}
                 >
@@ -586,6 +640,48 @@ export default function PosPage() {
               );
             })}
           </div>
+
+          {/* Banner y Selector de Descuento Automático para Sobrantes (Solo cuando la pestaña está activa) */}
+          {selectedCategoria === "SOBRANTES_PASTELERIA" && (
+            <div className="p-3 bg-amber-500/10 border border-amber-300/90 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 flex-shrink-0 animate-fadeIn shadow-2xs">
+              <div className="flex items-center space-x-2">
+                <div className="p-1.5 rounded-lg bg-amber-600 text-white">
+                  <Cake className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-xs sm:text-sm text-amber-950">
+                    🍰 Lote de Sobrantes (Pastelería Elaborada Ayer / posterior a las 22:00 hrs)
+                  </h4>
+                  <p className="text-[11px] text-amber-800">
+                    Al tocar un producto se añade al carrito con el descuento aplicado automáticamente:
+                  </p>
+                </div>
+              </div>
+
+              {/* Selector de Descuento Rápido (20%, 30%, 50%) */}
+              <div className="flex items-center space-x-1 bg-white p-1 rounded-lg border border-amber-300 shadow-2xs self-start sm:self-auto">
+                <span className="text-[10px] font-bold text-slate-500 px-1.5 uppercase">Descuento:</span>
+                {[
+                  { pct: 20, label: "20%", icon: Tag },
+                  { pct: 30, label: "30%", icon: Sparkles, default: true },
+                  { pct: 50, label: "50%", icon: Flame },
+                ].map((item) => (
+                  <button
+                    key={item.pct}
+                    type="button"
+                    onClick={() => setSobranteDiscountPercent(item.pct as any)}
+                    className={`px-2.5 py-1 rounded-md text-xs font-extrabold transition-all flex items-center space-x-1 ${
+                      sobranteDiscountPercent === item.pct
+                        ? "bg-amber-600 text-white shadow-xs scale-102"
+                        : "text-slate-700 hover:bg-amber-50"
+                    }`}
+                  >
+                    <span>-{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Toast de confirmación de escaneo */}
           {scanSuccessMsg && (
@@ -605,13 +701,21 @@ export default function PosPage() {
             </div>
           )}
 
-          {/* Grid de Productos con Scroll Propio (Nunca empuja el carrito hacia abajo) */}
+          {/* Grid de Productos con Scroll Propio */}
           <div className="flex-1 overflow-y-auto pr-1 min-h-0">
             {filteredProductos.length === 0 ? (
               <div className="h-64 flex flex-col items-center justify-center text-slate-400 text-center bg-white rounded-xl border border-dashed border-slate-300">
                 <Package className="w-10 h-10 opacity-30 mb-2" />
-                <p className="text-xs font-bold text-slate-700">No se encontraron productos</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">Prueba con otra búsqueda o categoría</p>
+                <p className="text-xs font-bold text-slate-700">
+                  {selectedCategoria === "SOBRANTES_PASTELERIA"
+                    ? "¡Excelente! No hay pasteles sobrantes de días anteriores."
+                    : "No se encontraron productos"}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  {selectedCategoria === "SOBRANTES_PASTELERIA"
+                    ? "Toda la producción artesanal del día anterior fue vendida."
+                    : "Prueba con otra búsqueda o categoría"}
+                </p>
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5 pb-20 lg:pb-3">
@@ -619,17 +723,28 @@ export default function PosPage() {
                   const stockActual = Number(p.stock_actual) || 0;
                   const isOutOfStock = stockActual <= 0;
                   const isLowStock = stockActual <= p.stock_minimo && !isOutOfStock;
-                  const isPastry = p.categoria_id === "cat_pasteleria";
+                  const isLeftover = isPastryLeftover(p);
+
+                  // Si está en la pestaña de Sobrantes o es sobrante, mostrar precio rebajado
+                  const isDiscountSection = selectedCategoria === "SOBRANTES_PASTELERIA";
+                  const precioRebajado = isDiscountSection
+                    ? Math.round(p.precio_venta * (1 - sobranteDiscountPercent / 100))
+                    : p.precio_venta;
 
                   return (
                     <div
                       key={p.id}
-                      onClick={() => !isOutOfStock && addToCart(p)}
+                      onClick={() =>
+                        !isOutOfStock &&
+                        addToCart(p, 1, isDiscountSection ? sobranteDiscountPercent : undefined)
+                      }
                       className={`bg-white border rounded-xl p-3 flex flex-col justify-between transition-all cursor-pointer select-none relative ${
                         isOutOfStock
                           ? "border-slate-200 opacity-50 cursor-not-allowed bg-slate-50"
-                          : isPastry
-                          ? "border-amber-200 hover:border-amber-400 hover:shadow-xs active:scale-98 bg-amber-50/20"
+                          : isDiscountSection
+                          ? "border-amber-300 hover:border-amber-500 hover:shadow-md active:scale-98 bg-amber-50/30"
+                          : isLeftover
+                          ? "border-amber-200 hover:border-amber-400 hover:shadow-xs active:scale-98 bg-amber-50/10"
                           : "border-slate-200 hover:border-[#3a4d6b] hover:shadow-xs active:scale-98"
                       }`}
                     >
@@ -648,25 +763,54 @@ export default function PosPage() {
                             {stockActual} u.
                           </span>
                         </div>
+
+                        {/* Badge identificador de Sobrante del Día Anterior */}
+                        {isLeftover && (
+                          <div className="mb-1">
+                            <span className="px-1.5 py-0.5 rounded text-[9.5px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 flex items-center space-x-1 w-fit">
+                              <Clock className="w-2.5 h-2.5" />
+                              <span>Lote Día Anterior</span>
+                            </span>
+                          </div>
+                        )}
+
                         <h4 className="font-bold text-slate-900 text-xs leading-snug line-clamp-2">
                           {p.nombre}
                         </h4>
                       </div>
 
-                      <div className="flex items-baseline justify-between mt-2.5 pt-2 border-t border-slate-100">
-                        <span className="text-xs sm:text-sm font-extrabold font-mono text-slate-900">
-                          {formatCLP(p.precio_venta)}
-                        </span>
-                        <button
-                          disabled={isOutOfStock}
-                          className={`p-1.5 rounded-lg transition-colors shadow-2xs ${
-                            isOutOfStock
-                              ? "bg-slate-100 text-slate-400"
-                              : "bg-[#3a4d6b] text-white hover:bg-slate-700"
-                          }`}
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
+                      <div className="mt-2.5 pt-2 border-t border-slate-100">
+                        {isDiscountSection ? (
+                          <div className="flex items-baseline justify-between">
+                            <div>
+                              <span className="text-[10px] text-slate-400 line-through font-mono block">
+                                {formatCLP(p.precio_venta)}
+                              </span>
+                              <span className="text-xs sm:text-sm font-extrabold font-mono text-emerald-700">
+                                {formatCLP(precioRebajado)}
+                              </span>
+                            </div>
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-extrabold">
+                              -{sobranteDiscountPercent}%
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-xs sm:text-sm font-extrabold font-mono text-slate-900">
+                              {formatCLP(p.precio_venta)}
+                            </span>
+                            <button
+                              disabled={isOutOfStock}
+                              className={`p-1.5 rounded-lg transition-colors shadow-2xs ${
+                                isOutOfStock
+                                  ? "bg-slate-100 text-slate-400"
+                                  : "bg-[#3a4d6b] text-white hover:bg-slate-700"
+                              }`}
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );

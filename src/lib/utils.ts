@@ -143,3 +143,64 @@ export function getChileHour(isoString?: string | null): number | null {
     return date.getHours();
   }
 }
+
+/**
+ * Obtiene la fecha actual en Chile en formato "YYYY-MM-DD"
+ */
+export function getChileTodayDate(): string {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Santiago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(now); // Retorna "YYYY-MM-DD"
+}
+
+/**
+ * Determina si un producto de pastelería califica automáticamente como "Sobrante del Día Anterior"
+ * basándose en la hora oficial de Chile (10:00 PM / 22:00 hrs o elaborado en días previos).
+ */
+export function isPastryLeftover(producto: {
+  categoria_id?: string | null;
+  stock_actual?: number;
+  fecha_elaboracion?: string | null;
+  created_at?: string | null;
+}): boolean {
+  // Solo aplica a productos de elaboración propia / pastelería con stock disponible
+  const isPasteleria =
+    producto.categoria_id === "cat_pasteleria" ||
+    producto.categoria_id?.toLowerCase().includes("pastel");
+
+  if (!isPasteleria) return false;
+  if (Number(producto.stock_actual || 0) <= 0) return false;
+
+  const chileToday = getChileTodayDate();
+  const now = new Date();
+  const currentChileHour = getChileHour(now.toISOString()) ?? now.getHours();
+
+  // Fecha de elaboración o creación del producto
+  const rawElab = producto.fecha_elaboracion
+    ? producto.fecha_elaboracion.slice(0, 10)
+    : producto.created_at
+    ? producto.created_at.slice(0, 10)
+    : null;
+
+  if (!rawElab) {
+    // Si no tiene fecha, se considera sobrante a partir de las 22:00 hrs
+    return currentChileHour >= 22;
+  }
+
+  // 1. Si la fecha de elaboración es anterior a hoy -> Es sobrante del día anterior
+  if (rawElab < chileToday) {
+    return true;
+  }
+
+  // 2. Si la fecha de elaboración es hoy, pero ya son las 22:00 hrs (10:00 PM) o más en Chile -> Pasa automáticamente a sobrante
+  if (rawElab === chileToday && currentChileHour >= 22) {
+    return true;
+  }
+
+  return false;
+}
