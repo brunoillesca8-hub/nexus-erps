@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useMemo, useCallback } from "react";
+import React, { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import {
   Search,
   Camera,
@@ -23,6 +23,8 @@ import {
   Flame,
   SunMedium,
   Check,
+  AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import { useErp } from "@/context/erp-context";
 import {
@@ -37,7 +39,7 @@ import { useBarcodeListener } from "@/hooks/useBarcodeListener";
 import type { Producto, CartItem, MetodoPago, Venta } from "@/types/erp";
 
 export default function PosPage() {
-  const { productos, categorias, clientes, empresa, sucursales, procesarVenta } = useErp();
+  const { productos, lotes, categorias, clientes, empresa, sucursales, procesarVenta, reclasificarLotesAutomatico } = useErp();
 
   // Estados del POS
   const [selectedCategoria, setSelectedCategoria] = useState<string>("ALL");
@@ -69,6 +71,11 @@ export default function PosPage() {
     index: number;
   } | null>(null);
 
+  // Ejecutar verificación automática de cierre de jornada al cargar la caja
+  useEffect(() => {
+    reclasificarLotesAutomatico();
+  }, [reclasificarLotesAutomatico]);
+
   const playScanBeep = () => {
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -99,7 +106,8 @@ export default function PosPage() {
     producto: Producto,
     cantidad = 1,
     forceDiscountPercent?: number,
-    tipoLote: "FRESCO" | "SOBRANTE" = "FRESCO"
+    tipoLote: "FRESCO" | "SOBRANTE" = "FRESCO",
+    loteIdExplicit?: string
   ) => {
     const isPastry =
       producto.categoria_id === "cat_pasteleria" ||
@@ -123,9 +131,19 @@ export default function PosPage() {
       return;
     }
 
+    // Buscar lote correspondiente si existe en la entidad lotes
+    const matchingLote =
+      loteIdExplicit ||
+      lotes.find(
+        (l) =>
+          l.producto_id === producto.id &&
+          l.estado === tipoLote &&
+          l.stock_actual > 0
+      )?.id;
+
     const discountPct =
       tipoLote === "SOBRANTE"
-        ? forceDiscountPercent ?? sobranteDiscountPercent
+        ? forceDiscountPercent ?? (producto.descuento_sobrante_default_pct || sobranteDiscountPercent)
         : forceDiscountPercent ?? 0;
 
     const autoDescUnit =
@@ -163,6 +181,7 @@ export default function PosPage() {
         updated[existingIndex] = {
           ...item,
           cantidad: newQty,
+          lote_id: matchingLote || item.lote_id,
           descuento_unitario: effectiveDescUnit,
           motivo_descuento: effectiveMotivo,
           subtotal: Math.max(0, (item.precio_unitario - effectiveDescUnit) * newQty),
@@ -173,6 +192,7 @@ export default function PosPage() {
           ...prevCart,
           {
             producto,
+            lote_id: matchingLote,
             cantidad,
             precio_unitario: producto.precio_venta,
             descuento_unitario: autoDescUnit,
@@ -188,7 +208,7 @@ export default function PosPage() {
     setLoteSelectModal(null);
   };
 
-  // Manejo de clic o escaneo de un producto
+  // Manejo contextual de clic o escaneo de un producto
   const handleProductSelect = (producto: Producto) => {
     if (producto.stock_actual <= 0) {
       setErrorMessage(`El producto "${producto.nombre}" no tiene stock disponible.`);
@@ -196,7 +216,7 @@ export default function PosPage() {
       return;
     }
 
-    // Si está en la pestaña "SOBRANTES_PASTELERIA", agregar directamente como sobrante con descuento
+    // Si está en la pestaña "SOBRANTES_PASTELERIA", agregar directo con descuento
     if (selectedCategoria === "SOBRANTES_PASTELERIA") {
       addToCart(producto, 1, sobranteDiscountPercent, "SOBRANTE");
       return;
@@ -204,7 +224,7 @@ export default function PosPage() {
 
     const breakdown = getPastryStockBreakdown(producto);
 
-    // Si tiene AMBOS lotes (Fresco del día Y Sobrantes de ayer), abrir el selector interactivo de lote
+    // Si tiene AMBOS lotes (FRESCO y SOBRANTE), disparar modal contextual
     if (breakdown.hasBoth) {
       setLoteSelectModal(producto);
       return;
@@ -216,7 +236,7 @@ export default function PosPage() {
       return;
     }
 
-    // Si solo tiene frescos o producto general
+    // Si solo tiene frescos o producto estándar
     addToCart(producto, 1, undefined, "FRESCO");
   };
 
@@ -328,7 +348,7 @@ export default function PosPage() {
     [productos, selectedCategoria, sobranteDiscountPercent]
   );
 
-  // Hook universal para pistolas USB y apps Wi-Fi
+  // Hook universal para escáner físico USB y apps Wi-Fi
   useBarcodeListener({
     onScan: handleBarcodeScanned,
     enabled: !isScannerOpen && !itemDescuentoModal && !loteSelectModal,
@@ -355,7 +375,7 @@ export default function PosPage() {
     });
   }, [productos, selectedCategoria, searchQuery]);
 
-  // Cálculos
+  // Cálculos de Totales
   const totalItemsCount = cart.reduce((acc, it) => acc + it.cantidad, 0);
   const subtotal = cart.reduce((acc, it) => acc + it.subtotal, 0);
   const totalDescuentosItems = cart.reduce(
@@ -385,6 +405,7 @@ export default function PosPage() {
       notas: notas || null,
       items: cart.map((it) => ({
         producto_id: it.producto.id,
+        lote_id: it.lote_id || undefined,
         cantidad: it.cantidad,
         precio_unitario: it.precio_unitario,
         costo_unitario: it.producto.precio_compra || 0,
@@ -424,7 +445,7 @@ export default function PosPage() {
     }
   };
 
-  // Componente de contenido del Carrito (Estructura Fija con Scroll Interno)
+  // Componente de contenido del Carrito (Fijo con Alerta Visual de Rotación)
   const CartContent = (
     <div className="flex flex-col h-full justify-between overflow-hidden bg-white">
       {/* Header Carrito */}
@@ -470,8 +491,8 @@ export default function PosPage() {
         </select>
       </div>
 
-      {/* Lista de Items con Scroll Interno Independiente */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2.5 divide-y divide-slate-100 min-h-0">
+      {/* Lista de Items con Scroll Interno y ALERTA VISUAL DE ROTACIÓN */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-3 divide-y divide-slate-100 min-h-0">
         {cart.length === 0 ? (
           <div className="h-44 flex flex-col items-center justify-center text-slate-400 text-center">
             <ShoppingCart className="w-9 h-9 opacity-25 mb-2 text-[#3a4d6b]" />
@@ -486,8 +507,12 @@ export default function PosPage() {
             const precioEfectivo = item.precio_unitario - (item.descuento_unitario || 0);
             const isSobrante = item.tipo_lote === "SOBRANTE";
 
+            // Verificar si este producto fresco tiene unidades sobrantes disponibles para rotación
+            const breakdown = getPastryStockBreakdown(item.producto);
+            const hasLeftoverAvailable = !isSobrante && breakdown.stockSobrante > 0;
+
             return (
-              <div key={`${item.producto.id}_${item.tipo_lote || "FRESCO"}`} className="pt-2 first:pt-0 space-y-1.5 text-xs">
+              <div key={`${item.producto.id}_${item.tipo_lote || "FRESCO"}`} className="pt-2.5 first:pt-0 space-y-1.5 text-xs">
                 <div className="flex items-center justify-between">
                   <div className="flex-1 pr-2 min-w-0">
                     <div className="flex items-center space-x-1.5">
@@ -558,7 +583,28 @@ export default function PosPage() {
                   </div>
                 </div>
 
-                {/* BOTÓN DE DESCUENTO DESTACADO Y VISIBLE */}
+                {/* ALERTA VISUAL DE ROTACIÓN DE INVENTARIO (FIFO/FEFO) */}
+                {hasLeftoverAvailable && (
+                  <div className="flex items-center justify-between p-2 rounded-lg bg-amber-500/15 border border-amber-300 text-amber-950 text-[10.5px] font-bold shadow-2xs animate-fadeIn">
+                    <div className="flex items-center space-x-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-700 flex-shrink-0" />
+                      <span>Existen {breakdown.stockSobrante} un. de sobrante para rotar</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        removeFromCart(item.producto.id, "FRESCO");
+                        addToCart(item.producto, item.cantidad, sobranteDiscountPercent, "SOBRANTE");
+                      }}
+                      className="px-2 py-0.5 rounded bg-amber-200 hover:bg-amber-300 text-amber-950 border border-amber-400 text-[10px] font-extrabold flex items-center space-x-1 transition-colors cursor-pointer"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                      <span>Cambiar a Sobrante</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* BOTÓN DE DESCUENTO INDIVIDUAL */}
                 <div className="flex items-center justify-between pt-0.5">
                   {hasDiscount ? (
                     <div className="flex items-center space-x-1 bg-emerald-50 border border-emerald-300 text-emerald-900 px-2 py-0.5 rounded-md text-[10px] font-bold shadow-2xs">
@@ -589,7 +635,7 @@ export default function PosPage() {
         )}
       </div>
 
-      {/* FOOTER FIJO: Métodos de Pago, Totales y BOTÓN CONFIRMAR VENTA (SIEMPRE VISIBLE ABAJO) */}
+      {/* FOOTER FIJO: Métodos de Pago, Totales y BOTÓN CONFIRMAR VENTA */}
       <div className="p-3 bg-slate-50 border-t border-slate-200 space-y-2 flex-shrink-0 shadow-inner">
         {/* Selector de Método de Pago */}
         <div className="space-y-1">
@@ -742,7 +788,7 @@ export default function PosPage() {
             })}
           </div>
 
-          {/* Banner y Selector de Descuento Automático para Sobrantes (Solo cuando la pestaña está activa) */}
+          {/* Banner y Selector de Descuento Automático para Sobrantes */}
           {selectedCategoria === "SOBRANTES_PASTELERIA" && (
             <div className="p-3 bg-amber-500/10 border border-amber-300/90 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 flex-shrink-0 animate-fadeIn shadow-2xs">
               <div className="flex items-center space-x-2">
@@ -751,7 +797,7 @@ export default function PosPage() {
                 </div>
                 <div>
                   <h4 className="font-extrabold text-xs sm:text-sm text-amber-950">
-                    🍰 Lote de Sobrantes (Pastelería Elaborada Ayer / posterior a las 22:00 hrs)
+                    🍰 Lote de Sobrantes (Pastelería Elaborada Ayer / Posterior a las 22:00 hrs)
                   </h4>
                   <p className="text-[11px] text-amber-800">
                     Al tocar un producto se añade al carrito con el descuento aplicado automáticamente:
@@ -987,10 +1033,11 @@ export default function PosPage() {
         </div>
       )}
 
-      {/* MODAL SELECTOR DE LOTE (FRESCO VS. AÑEJO / SOBRANTE) */}
+      {/* MODAL SELECTOR CONTEXTUAL DE LOTE (FRESCO VS. SOBRANTE) */}
       {loteSelectModal && (() => {
         const b = getPastryStockBreakdown(loteSelectModal);
-        const precioSobrante = Math.round(loteSelectModal.precio_venta * (1 - sobranteDiscountPercent / 100));
+        const descPct = loteSelectModal.descuento_sobrante_default_pct || sobranteDiscountPercent;
+        const precioSobrante = Math.round(loteSelectModal.precio_venta * (1 - descPct / 100));
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
@@ -1000,10 +1047,10 @@ export default function PosPage() {
                   <Cake className="w-5 h-5 text-amber-700" />
                   <div>
                     <h3 className="font-bold text-sm text-slate-900">
-                      ¿Qué lote vas a vender?
+                      Selecciona el Lote para la Venta
                     </h3>
                     <p className="text-[11px] text-slate-500 truncate max-w-[260px]">
-                      {loteSelectModal.nombre}
+                      {loteSelectModal.nombre} (SKU #{loteSelectModal.sku})
                     </p>
                   </div>
                 </div>
@@ -1017,10 +1064,10 @@ export default function PosPage() {
 
               <div className="p-5 space-y-3">
                 <p className="text-xs text-slate-600 font-medium">
-                  Este producto tiene tanto unidades recién horneadas hoy como sobrantes del día anterior. Elige la opción adecuada:
+                  Este producto tiene unidades frescas elaboradas hoy y unidades sobrantes con descuento. Selecciona el lote:
                 </p>
 
-                {/* Opción 1: Fresco del Día */}
+                {/* Tarjeta 1: Producto Fresco */}
                 <button
                   type="button"
                   onClick={() => addToCart(loteSelectModal, 1, undefined, "FRESCO")}
@@ -1030,11 +1077,11 @@ export default function PosPage() {
                     <div className="flex items-center space-x-2">
                       <SunMedium className="w-4 h-4 text-emerald-700" />
                       <span className="font-extrabold text-sm text-emerald-950">
-                        1. Fresco del Día (Normal)
+                        [ Producto Fresco ]
                       </span>
                     </div>
                     <p className="text-xs text-emerald-800">
-                      Elaboración de hoy • <b className="font-mono">{b.stockFresco} unidades disponibles</b>
+                      Elaboración de hoy • <b className="font-mono">{b.stockFresco} u. disponibles</b>
                     </p>
                   </div>
                   <div className="text-right">
@@ -1045,21 +1092,21 @@ export default function PosPage() {
                   </div>
                 </button>
 
-                {/* Opción 2: Añejo / Sobrante con Descuento */}
+                {/* Tarjeta 2: Sobrante del Día Anterior */}
                 <button
                   type="button"
-                  onClick={() => addToCart(loteSelectModal, 1, sobranteDiscountPercent, "SOBRANTE")}
+                  onClick={() => addToCart(loteSelectModal, 1, descPct, "SOBRANTE")}
                   className="w-full p-4 rounded-xl border-2 border-amber-500 bg-amber-50/60 hover:bg-amber-50 text-left transition-all hover:scale-101 flex items-center justify-between group shadow-2xs cursor-pointer"
                 >
                   <div className="space-y-1">
                     <div className="flex items-center space-x-2">
                       <Clock className="w-4 h-4 text-amber-800" />
                       <span className="font-extrabold text-sm text-amber-950">
-                        2. Lote Día Anterior (-{sobranteDiscountPercent}%)
+                        [ Sobrante del Día Anterior ]
                       </span>
                     </div>
                     <p className="text-xs text-amber-800">
-                      Sobrante de ayer • <b className="font-mono">{b.stockSobrante} unidades disponibles</b>
+                      Lote anterior • <b className="font-mono">{b.stockSobrante} u. disponibles</b>
                     </p>
                   </div>
                   <div className="text-right">
@@ -1070,7 +1117,7 @@ export default function PosPage() {
                       {formatCLP(precioSobrante)}
                     </span>
                     <span className="px-1.5 py-0.2 rounded bg-amber-200 text-amber-950 text-[10px] font-extrabold">
-                      -{sobranteDiscountPercent}%
+                      -{descPct}%
                     </span>
                   </div>
                 </button>

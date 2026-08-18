@@ -8,6 +8,8 @@ import type {
   Proveedor,
   Cliente,
   Producto,
+  Lote,
+  EstadoLote,
   Venta,
   MovimientoInventario,
   ProcesarVentaPayload,
@@ -38,6 +40,7 @@ interface ErpContextType {
   proveedores: Proveedor[];
   clientes: Cliente[];
   productos: Producto[];
+  lotes: Lote[];
   ventas: Venta[];
   movimientos: MovimientoInventario[];
   isLoading: boolean;
@@ -47,6 +50,16 @@ interface ErpContextType {
 
   // Operaciones
   procesarVenta: (payload: ProcesarVentaPayload) => Promise<{ success: boolean; folio?: number; error?: string; ventaId?: string }>;
+  crearLote: (loteData: {
+    producto_id: string;
+    producto_sku?: number;
+    cantidad_inicial: number;
+    fecha_elaboracion?: string;
+    fecha_vencimiento?: string;
+    estado?: EstadoLote;
+    descuento_aplicado_pct?: number;
+  }) => Promise<{ success: boolean; lote?: Lote; error?: string }>;
+  reclasificarLotesAutomatico: () => Promise<{ success: boolean; reclassifiedCount?: number }>;
   ajustarStock: (
     productoId: string,
     cantidad: number,
@@ -87,6 +100,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
+  const [lotes, setLotes] = useState<Lote[]>([]);
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [movimientos, setMovimientos] = useState<MovimientoInventario[]>([]);
 
@@ -181,6 +195,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
         if (data.productos) setProductos(data.productos);
         if (data.ventas) setVentas(data.ventas);
         if (data.movimientos) setMovimientos(data.movimientos);
+        if (data.lotes) setLotes(data.lotes);
 
         setLastSyncTime(new Date());
         setSyncError(null);
@@ -331,6 +346,55 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message || "Error de red" };
+    }
+  };
+
+  // 3.1 Crear Lote específico (Batch Tracking)
+  const crearLote = async (loteData: {
+    producto_id: string;
+    producto_sku?: number;
+    cantidad_inicial: number;
+    fecha_elaboracion?: string;
+    fecha_vencimiento?: string;
+    estado?: EstadoLote;
+    descuento_aplicado_pct?: number;
+  }) => {
+    try {
+      const res = await fetch("/api/lotes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...loteData,
+          empresa_id: empresa?.id || "emp_default",
+          sucursal_id: sucursales[0]?.id || "suc_default",
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        return { success: false, error: data.error || "Error al crear lote" };
+      }
+
+      notifyBroadcast("LOTE_CREADO");
+      fetchData(true);
+      return { success: true, lote: data.lote };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Error de red al crear lote" };
+    }
+  };
+
+  // 3.2 Reclasificación Automática de Cierre de Jornada (22:00 CLT)
+  const reclasificarLotesAutomatico = async () => {
+    try {
+      const res = await fetch("/api/cron/reclasificar-lotes");
+      const data = await res.json();
+      if (data.success && data.reclassifiedCount > 0) {
+        notifyBroadcast("LOTES_RECLASIFICADOS");
+        fetchData(true);
+      }
+      return { success: true, reclassifiedCount: data.reclassifiedCount || 0 };
+    } catch (err: any) {
+      return { success: false, error: err.message };
     }
   };
 
@@ -494,6 +558,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
         proveedores,
         clientes,
         productos,
+        lotes,
         ventas,
         movimientos,
         isLoading: isLoading || isAuthChecking,
@@ -501,6 +566,8 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
         lastSyncTime,
         syncError,
         procesarVenta,
+        crearLote,
+        reclasificarLotesAutomatico,
         ajustarStock,
         agregarProductosLote,
         guardarProducto,

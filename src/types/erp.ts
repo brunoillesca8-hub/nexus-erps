@@ -85,6 +85,7 @@ export interface Producto {
   stock_actual: number;
   stock_minimo: number;
   stock_sobrante?: number; // Stock de días anteriores (añejo/liquidación)
+  descuento_sobrante_default_pct?: number; // Por defecto 30%
   unidad_medida: string;
   imagen_url?: string | null;
   fecha_elaboracion?: string | null; // YYYY-MM-DD
@@ -93,6 +94,27 @@ export interface Producto {
   created_at?: string;
   updated_at?: string;
   categoria_nombre?: string;
+}
+
+export type EstadoLote = 'FRESCO' | 'SOBRANTE' | 'AGOTADO' | 'MERMA';
+
+export interface Lote {
+  id: string;
+  empresa_id: string;
+  sucursal_id: string;
+  producto_id: string;
+  producto_sku: number;
+  fecha_elaboracion: string;
+  fecha_vencimiento?: string | null;
+  cantidad_inicial: number;
+  stock_actual: number;
+  estado: EstadoLote;
+  descuento_aplicado_pct: number;
+  created_at?: string;
+  updated_at?: string;
+  producto_nombre?: string;
+  precio_base?: number;
+  precio_final?: number;
 }
 
 export interface Venta {
@@ -117,6 +139,7 @@ export interface DetalleVenta {
   id: string;
   venta_id: string;
   producto_id: string;
+  lote_id?: string | null;
   cantidad: number;
   precio_unitario: number;
   costo_unitario: number;
@@ -147,6 +170,7 @@ export interface MovimientoInventario {
 // Interfaces auxiliares para POS y operaciones
 export interface CartItem {
   producto: Producto;
+  lote_id?: string;
   cantidad: number;
   precio_unitario: number;
   descuento_unitario?: number;
@@ -165,6 +189,7 @@ export interface ProcesarVentaPayload {
   notas?: string | null;
   items: {
     producto_id: string;
+    lote_id?: string;
     cantidad: number;
     precio_unitario: number;
     costo_unitario: number;

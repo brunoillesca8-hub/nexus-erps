@@ -168,6 +168,27 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
 
     `CREATE INDEX IF NOT EXISTS idx_mov_prod_fecha ON movimientos_inventario(producto_id, created_at);`,
 
+    `CREATE TABLE IF NOT EXISTS lotes (
+      id TEXT PRIMARY KEY,
+      empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+      sucursal_id TEXT NOT NULL REFERENCES sucursales(id),
+      producto_id TEXT NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+      producto_sku INTEGER NOT NULL,
+      fecha_elaboracion TEXT NOT NULL,
+      fecha_vencimiento TEXT,
+      cantidad_inicial INTEGER NOT NULL,
+      stock_actual INTEGER NOT NULL,
+      estado TEXT CHECK(estado IN ('FRESCO', 'SOBRANTE', 'AGOTADO', 'MERMA')) DEFAULT 'FRESCO',
+      descuento_aplicado_pct REAL DEFAULT 0.0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`,
+
+    `CREATE INDEX IF NOT EXISTS idx_lotes_prod ON lotes(producto_id, estado);`,
+    `CREATE INDEX IF NOT EXISTS idx_lotes_sku ON lotes(producto_sku);`,
+    `CREATE INDEX IF NOT EXISTS idx_lotes_estado ON lotes(estado);`,
+    `CREATE INDEX IF NOT EXISTS idx_lotes_fecha_elab ON lotes(fecha_elaboracion);`,
+
     `INSERT OR IGNORE INTO empresas (id, nombre, rut_identificador, direccion, email, telefono, moneda, iva_porcentaje)
      VALUES ('emp_default', 'Mi Negocio Comercial', '76.123.456-7', 'Calle Comercial 123', 'contacto@minegocio.cl', '+56 9 1234 5678', 'CLP', 19.00);`,
 
@@ -176,6 +197,7 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
 
     `INSERT OR IGNORE INTO categorias (id, empresa_id, nombre, descripcion)
      VALUES 
+       ('cat_pasteleria', 'emp_default', 'Pastelería & Elaboración Propia', 'Tortas, pasteles, masas dulces, panes y empanadas artesanales'),
        ('cat_bebidas', 'emp_default', 'Bebidas y Líquidos', 'Aguas, jugos, bebidas, cervezas y licores'),
        ('cat_abarrotes', 'emp_default', 'Abarrotes Generales', 'Arroz, harinas, aceites, azúcar, sal y granos'),
        ('cat_lacteos', 'emp_default', 'Lácteos y Quesos', 'Leches, quesos, mantequillas, cremas y yogures'),
@@ -206,6 +228,12 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
     }
 
     try {
+      await db.execute("ALTER TABLE productos ADD COLUMN descuento_sobrante_default_pct REAL DEFAULT 30.0");
+    } catch {
+      // Columna ya existe
+    }
+
+    try {
       await db.execute("ALTER TABLE detalle_ventas ADD COLUMN descuento REAL DEFAULT 0");
     } catch {
       // Columna ya existe
@@ -213,6 +241,18 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
 
     try {
       await db.execute("ALTER TABLE detalle_ventas ADD COLUMN motivo_descuento TEXT");
+    } catch {
+      // Columna ya existe
+    }
+
+    try {
+      await db.execute("ALTER TABLE detalle_ventas ADD COLUMN lote_id TEXT");
+    } catch {
+      // Columna ya existe
+    }
+
+    try {
+      await db.execute("ALTER TABLE detalle_ventas ADD COLUMN tipo_lote TEXT DEFAULT 'FRESCO'");
     } catch {
       // Columna ya existe
     }

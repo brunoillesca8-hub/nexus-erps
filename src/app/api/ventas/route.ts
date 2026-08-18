@@ -109,12 +109,26 @@ export async function POST(req: Request) {
         });
       }
 
+      // Descuento atómico en la entidad Lotes si viene especificado lote_id
+      if (item.lote_id) {
+        batchStatements.push({
+          sql: `UPDATE lotes 
+                SET stock_actual = MAX(0, stock_actual - ?),
+                    estado = CASE WHEN stock_actual - ? <= 0 THEN 'AGOTADO' ELSE estado END,
+                    updated_at = CURRENT_TIMESTAMP 
+                WHERE id = ?`,
+          args: [item.cantidad, item.cantidad, item.lote_id],
+        });
+      }
+
       // Detalle de venta
       const detalleId = generateUUID();
       detallesToInsert.push({
         id: detalleId,
         venta_id: ventaId,
         producto_id: item.producto_id,
+        lote_id: item.lote_id || null,
+        tipo_lote: item.tipo_lote || "FRESCO",
         cantidad: item.cantidad,
         precio_unitario: item.precio_unitario,
         costo_unitario: item.costo_unitario || Number(prod.precio_compra) || 0,
@@ -123,8 +137,12 @@ export async function POST(req: Request) {
         motivo_descuento: item.motivo_descuento || null,
       });
 
-      // Kardex (Movimiento de inventario)
+      // Kardex (Movimiento de inventario por lote)
       const movId = generateUUID();
+      const motivoKardex = item.lote_id
+        ? `Venta POS • Lote #${item.lote_id.slice(0, 8)} (${item.tipo_lote || "FRESCO"})`
+        : `Venta POS (${item.tipo_lote || "FRESCO"})`;
+
       movimientosToInsert.push({
         id: movId,
         empresa_id: empresa_id || "emp_default",
@@ -134,7 +152,7 @@ export async function POST(req: Request) {
         cantidad: item.cantidad,
         stock_anterior: currentStock,
         stock_posterior: newStock,
-        motivo: `Venta POS`,
+        motivo: motivoKardex,
         venta_id: ventaId,
       });
     }

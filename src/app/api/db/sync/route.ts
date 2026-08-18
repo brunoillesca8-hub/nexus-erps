@@ -20,6 +20,7 @@ export async function GET() {
       productosRes,
       ventasRes,
       movimientosRes,
+      lotesRes,
     ] = await Promise.all([
       db.execute("SELECT * FROM empresas WHERE activo = 1 LIMIT 1"),
       db.execute("SELECT * FROM sucursales WHERE activo = 1"),
@@ -47,6 +48,13 @@ export async function GET() {
         ORDER BY m.created_at DESC 
         LIMIT 300
       `),
+      db.execute(`
+        SELECT l.*, p.nombre as producto_nombre, p.precio_venta as precio_base
+        FROM lotes l
+        JOIN productos p ON l.producto_id = p.id
+        WHERE l.stock_actual > 0
+        ORDER BY l.fecha_elaboracion ASC
+      `),
     ]);
 
     return NextResponse.json({
@@ -60,6 +68,7 @@ export async function GET() {
       productos: productosRes.rows,
       ventas: ventasRes.rows,
       movimientos: movimientosRes.rows,
+      lotes: lotesRes.rows,
     });
   } catch (error: any) {
     console.error("Error en sync API:", error);

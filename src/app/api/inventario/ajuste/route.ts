@@ -67,38 +67,74 @@ export async function POST(req: Request) {
     const newFechaElab = fecha_elaboracion || (Number(cantidad) > 0 ? nowIso.slice(0, 10) : prod.fecha_elaboracion);
     const newFechaVenc = fecha_vencimiento || prod.fecha_vencimiento;
 
-    // Ejecutar actualización de stock y registro en Kardex en una transacción atómica
-    await db.batch(
-      [
-        {
-          sql: `UPDATE productos 
-                SET stock_actual = ?, 
-                    stock_sobrante = ?, 
-                    fecha_elaboracion = COALESCE(?, fecha_elaboracion), 
-                    fecha_vencimiento = COALESCE(?, fecha_vencimiento), 
+    const batchStatements: any[] = [
+      {
+        sql: `UPDATE productos 
+              SET stock_actual = ?, 
+                  stock_sobrante = ?, 
+                  fecha_elaboracion = COALESCE(?, fecha_elaboracion), 
+                  fecha_vencimiento = COALESCE(?, fecha_vencimiento), 
+                  updated_at = ? 
+              WHERE id = ?`,
+        args: [newStock, newStockSobrante, newFechaElab, newFechaVenc, nowIso, producto_id],
+      },
+      {
+        sql: `INSERT INTO movimientos_inventario (id, empresa_id, sucursal_id, producto_id, tipo, cantidad, stock_anterior, stock_posterior, motivo, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          movId,
+          empresa_id || prod.empresa_id || "emp_default",
+          sucursal_id || "suc_default",
+          producto_id,
+          resolvedTipo,
+          Math.abs(Number(cantidad)),
+          currentStock,
+          newStock,
+          motivo || (Number(cantidad) > 0 ? "Nueva elaboración / Reposición" : "Ajuste manual"),
+          nowIso,
+        ],
+      },
+    ];
+
+    // Si es ingreso positivo, registrar nuevo lote FRESCO
+    if (Number(cantidad) > 0) {
+      const loteId = generateUUID();
+      
+      // Si es pastelería y habían lotes anteriores frescos, pasarlos a SOBRANTE
+      if (isPasteleria && currentStock > 0) {
+        batchStatements.push({
+          sql: `UPDATE lotes 
+                SET estado = 'SOBRANTE', 
+                    descuento_aplicado_pct = COALESCE((SELECT descuento_sobrante_default_pct FROM productos WHERE id = ?), 30.0), 
                     updated_at = ? 
-                WHERE id = ?`,
-          args: [newStock, newStockSobrante, newFechaElab, newFechaVenc, nowIso, producto_id],
-        },
-        {
-          sql: `INSERT INTO movimientos_inventario (id, empresa_id, sucursal_id, producto_id, tipo, cantidad, stock_anterior, stock_posterior, motivo, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          args: [
-            movId,
-            empresa_id || prod.empresa_id || "emp_default",
-            sucursal_id || "suc_default",
-            producto_id,
-            resolvedTipo,
-            Math.abs(Number(cantidad)),
-            currentStock,
-            newStock,
-            motivo || (Number(cantidad) > 0 ? "Nueva elaboración / Reposición" : "Ajuste manual"),
-            nowIso,
-          ],
-        },
-      ],
-      "write"
-    );
+                WHERE producto_id = ? AND estado = 'FRESCO' AND stock_actual > 0`,
+          args: [producto_id, nowIso, producto_id],
+        });
+      }
+
+      batchStatements.push({
+        sql: `INSERT INTO lotes (
+                id, empresa_id, sucursal_id, producto_id, producto_sku, 
+                fecha_elaboracion, fecha_vencimiento, cantidad_inicial, stock_actual, 
+                estado, descuento_aplicado_pct, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'FRESCO', 0, ?, ?)`,
+        args: [
+          loteId,
+          empresa_id || prod.empresa_id || "emp_default",
+          sucursal_id || "suc_default",
+          producto_id,
+          Number(prod.sku),
+          newFechaElab,
+          newFechaVenc,
+          Number(cantidad),
+          Number(cantidad),
+          nowIso,
+          nowIso,
+        ],
+      });
+    }
+
+    await db.batch(batchStatements, "write");
 
     return NextResponse.json({
       success: true,
