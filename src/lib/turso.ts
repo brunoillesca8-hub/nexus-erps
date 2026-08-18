@@ -217,6 +217,12 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
       // Columna ya existe
     }
 
+    try {
+      await db.execute("ALTER TABLE productos ADD COLUMN stock_sobrante INTEGER DEFAULT 0");
+    } catch {
+      // Columna ya existe
+    }
+
     return { success: true, message: "Base de datos Turso / LibSQL inicializada correctamente." };
   } catch (error: any) {
     console.error("Error al inicializar la base de datos:", error);

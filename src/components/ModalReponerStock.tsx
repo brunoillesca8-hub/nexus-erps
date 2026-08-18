@@ -22,18 +22,26 @@ export default function ModalReponerStock({
   const { ajustarStock } = useErp();
   const [cantidadSumar, setCantidadSumar] = useState<number>(10);
   const [motivo, setMotivo] = useState<string>("Entrada por reposición");
+  const [fechaElaboracion, setFechaElaboracion] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [fechaVencimiento, setFechaVencimiento] = useState<string>("");
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  const isPasteleria =
+    producto?.categoria_id === "cat_pasteleria" ||
+    producto?.categoria_nombre?.toLowerCase().includes("pastel");
+
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && producto) {
       setCantidadSumar(10);
-      setMotivo("Entrada por reposición");
+      setMotivo(isPasteleria ? "Nueva elaboración fresca del día" : "Entrada por reposición");
+      setFechaElaboracion(new Date().toISOString().slice(0, 10));
+      setFechaVencimiento(producto.fecha_vencimiento || "");
       setError(null);
       setSuccess(false);
     }
-  }, [isOpen, producto]);
+  }, [isOpen, producto, isPasteleria]);
 
   if (!isOpen || !producto) return null;
 
@@ -53,8 +61,13 @@ export default function ModalReponerStock({
     const res = await ajustarStock(
       producto.id,
       Number(cantidadSumar),
-      motivo.trim() || "Entrada por reposición",
-      "ENTRADA_COMPRA"
+      motivo.trim() || (isPasteleria ? "Nueva elaboración fresca" : "Entrada por reposición"),
+      "ENTRADA_COMPRA",
+      undefined,
+      undefined,
+      fechaElaboracion,
+      fechaVencimiento || undefined,
+      isPasteleria
     );
 
     setIsSaving(false);

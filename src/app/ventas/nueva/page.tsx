@@ -21,9 +21,16 @@ import {
   Clock,
   Sparkles,
   Flame,
+  SunMedium,
+  Check,
 } from "lucide-react";
 import { useErp } from "@/context/erp-context";
-import { formatCLP, matchesSearch, isPastryLeftover } from "@/lib/utils";
+import {
+  formatCLP,
+  matchesSearch,
+  isPastryLeftover,
+  getPastryStockBreakdown,
+} from "@/lib/utils";
 import BarcodeScannerModal from "@/components/BarcodeScannerModal";
 import TicketModal from "@/components/TicketModal";
 import { useBarcodeListener } from "@/hooks/useBarcodeListener";
@@ -53,6 +60,9 @@ export default function PosPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [scanSuccessMsg, setScanSuccessMsg] = useState<string | null>(null);
 
+  // Modal para elegir Lote (Fresco vs. Sobrante Añejo) cuando un producto tiene ambos
+  const [loteSelectModal, setLoteSelectModal] = useState<Producto | null>(null);
+
   // Modal de descuento individual manual por item
   const [itemDescuentoModal, setItemDescuentoModal] = useState<{
     item: CartItem;
@@ -77,47 +87,76 @@ export default function PosPage() {
     }
   };
 
-  // Identificar automáticamente los sobrantes de pastelería
+  // Identificar productos que tengan unidades sobrantes de pastelería
   const leftoverPastries = useMemo(() => {
-    return productos.filter(isPastryLeftover);
+    return productos.filter((p) => {
+      const b = getPastryStockBreakdown(p);
+      return b.isPastry && b.stockSobrante > 0;
+    });
   }, [productos]);
 
-  const addToCart = (producto: Producto, cantidad = 1, forceDiscountPercent?: number) => {
-    if (producto.stock_actual <= 0) {
-      setErrorMessage(`El producto "${producto.nombre}" no tiene stock disponible.`);
-      setTimeout(() => setErrorMessage(null), 3000);
+  const addToCart = (
+    producto: Producto,
+    cantidad = 1,
+    forceDiscountPercent?: number,
+    tipoLote: "FRESCO" | "SOBRANTE" = "FRESCO"
+  ) => {
+    const isPastry =
+      producto.categoria_id === "cat_pasteleria" ||
+      producto.categoria_nombre?.toLowerCase().includes("pastel");
+
+    const breakdown = getPastryStockBreakdown(producto);
+    const maxAvailable =
+      isPastry && tipoLote === "SOBRANTE"
+        ? breakdown.stockSobrante
+        : isPastry && tipoLote === "FRESCO" && breakdown.hasBoth
+        ? breakdown.stockFresco
+        : producto.stock_actual;
+
+    if (maxAvailable <= 0) {
+      setErrorMessage(
+        `No hay unidades disponibles del lote ${
+          tipoLote === "SOBRANTE" ? "sobrante / añejo" : "fresco"
+        } para "${producto.nombre}".`
+      );
+      setTimeout(() => setErrorMessage(null), 3500);
       return;
     }
 
-    // Determinar si aplica descuento automático por ser de la sección Sobrantes
-    const isAutoSobrante =
-      forceDiscountPercent !== undefined ||
-      (selectedCategoria === "SOBRANTES_PASTELERIA" && isPastryLeftover(producto));
+    const discountPct =
+      tipoLote === "SOBRANTE"
+        ? forceDiscountPercent ?? sobranteDiscountPercent
+        : forceDiscountPercent ?? 0;
 
-    const discountPct = isAutoSobrante
-      ? forceDiscountPercent ?? sobranteDiscountPercent
-      : 0;
+    const autoDescUnit =
+      discountPct > 0
+        ? Math.round(producto.precio_venta * (discountPct / 100))
+        : 0;
 
-    const autoDescUnit = discountPct > 0
-      ? Math.round(producto.precio_venta * (discountPct / 100))
-      : 0;
-
-    const autoMotivo = discountPct > 0
-      ? `Pastel día anterior (-${discountPct}%)`
-      : undefined;
+    const autoMotivo =
+      discountPct > 0
+        ? `Pastel día anterior (-${discountPct}%)`
+        : undefined;
 
     setCart((prevCart) => {
-      const existingIndex = prevCart.findIndex((item) => item.producto.id === producto.id);
+      const itemKey = `${producto.id}_${tipoLote}`;
+      const existingIndex = prevCart.findIndex(
+        (it) => `${it.producto.id}_${it.tipo_lote || "FRESCO"}` === itemKey
+      );
+
       if (existingIndex > -1) {
         const item = prevCart[existingIndex];
         const newQty = item.cantidad + cantidad;
-        if (newQty > producto.stock_actual) {
-          setErrorMessage(`Stock máximo alcanzado para "${producto.nombre}" (${producto.stock_actual} un.)`);
+        if (newQty > maxAvailable) {
+          setErrorMessage(
+            `Stock máximo alcanzado para "${producto.nombre}" (${tipoLote === "SOBRANTE" ? "Añejo" : "Fresco"}: ${maxAvailable} un.)`
+          );
           setTimeout(() => setErrorMessage(null), 3000);
           return prevCart;
         }
 
-        const effectiveDescUnit = autoDescUnit > 0 ? autoDescUnit : (item.descuento_unitario || 0);
+        const effectiveDescUnit =
+          autoDescUnit > 0 ? autoDescUnit : item.descuento_unitario || 0;
         const effectiveMotivo = autoMotivo || item.motivo_descuento;
 
         const updated = [...prevCart];
@@ -139,22 +178,67 @@ export default function PosPage() {
             descuento_unitario: autoDescUnit,
             descuento_porcentaje: discountPct > 0 ? discountPct : undefined,
             motivo_descuento: autoMotivo,
+            tipo_lote: tipoLote,
             subtotal: Math.max(0, (producto.precio_venta - autoDescUnit) * cantidad),
           },
         ];
       }
     });
+
+    setLoteSelectModal(null);
   };
 
-  const updateQuantity = (productoId: string, delta: number) => {
+  // Manejo de clic o escaneo de un producto
+  const handleProductSelect = (producto: Producto) => {
+    if (producto.stock_actual <= 0) {
+      setErrorMessage(`El producto "${producto.nombre}" no tiene stock disponible.`);
+      setTimeout(() => setErrorMessage(null), 3000);
+      return;
+    }
+
+    // Si está en la pestaña "SOBRANTES_PASTELERIA", agregar directamente como sobrante con descuento
+    if (selectedCategoria === "SOBRANTES_PASTELERIA") {
+      addToCart(producto, 1, sobranteDiscountPercent, "SOBRANTE");
+      return;
+    }
+
+    const breakdown = getPastryStockBreakdown(producto);
+
+    // Si tiene AMBOS lotes (Fresco del día Y Sobrantes de ayer), abrir el selector interactivo de lote
+    if (breakdown.hasBoth) {
+      setLoteSelectModal(producto);
+      return;
+    }
+
+    // Si solo tiene sobrantes de ayer
+    if (breakdown.stockSobrante > 0 && breakdown.stockFresco === 0) {
+      addToCart(producto, 1, sobranteDiscountPercent, "SOBRANTE");
+      return;
+    }
+
+    // Si solo tiene frescos o producto general
+    addToCart(producto, 1, undefined, "FRESCO");
+  };
+
+  const updateQuantity = (productoId: string, tipoLote: "FRESCO" | "SOBRANTE" = "FRESCO", delta: number) => {
     setCart((prevCart) => {
+      const itemKey = `${productoId}_${tipoLote}`;
       return prevCart
         .map((item) => {
-          if (item.producto.id === productoId) {
+          if (`${item.producto.id}_${item.tipo_lote || "FRESCO"}` === itemKey) {
             const newQty = item.cantidad + delta;
             if (newQty <= 0) return null;
-            if (newQty > item.producto.stock_actual) {
-              setErrorMessage(`Stock máximo alcanzado (${item.producto.stock_actual} un.)`);
+
+            const breakdown = getPastryStockBreakdown(item.producto);
+            const maxAvailable =
+              tipoLote === "SOBRANTE"
+                ? breakdown.stockSobrante
+                : breakdown.hasBoth
+                ? breakdown.stockFresco
+                : item.producto.stock_actual;
+
+            if (newQty > maxAvailable) {
+              setErrorMessage(`Stock máximo alcanzado (${maxAvailable} un.)`);
               setTimeout(() => setErrorMessage(null), 3000);
               return item;
             }
@@ -173,13 +257,15 @@ export default function PosPage() {
 
   const applyItemDiscount = (
     productoId: string,
+    tipoLote: "FRESCO" | "SOBRANTE" = "FRESCO",
     descuentoUnitario: number,
     motivo?: string,
     porcentaje?: number
   ) => {
-    setCart((prev) =>
-      prev.map((item) => {
-        if (item.producto.id === productoId) {
+    setCart((prev) => {
+      const itemKey = `${productoId}_${tipoLote}`;
+      return prev.map((item) => {
+        if (`${item.producto.id}_${item.tipo_lote || "FRESCO"}` === itemKey) {
           const descVal = Math.min(item.precio_unitario, Math.max(0, descuentoUnitario));
           return {
             ...item,
@@ -190,13 +276,14 @@ export default function PosPage() {
           };
         }
         return item;
-      })
-    );
+      });
+    });
     setItemDescuentoModal(null);
   };
 
-  const removeFromCart = (productoId: string) => {
-    setCart((prev) => prev.filter((it) => it.producto.id !== productoId));
+  const removeFromCart = (productoId: string, tipoLote: "FRESCO" | "SOBRANTE" = "FRESCO") => {
+    const itemKey = `${productoId}_${tipoLote}`;
+    setCart((prev) => prev.filter((it) => `${it.producto.id}_${it.tipo_lote || "FRESCO"}` !== itemKey));
   };
 
   const clearCart = () => {
@@ -229,11 +316,9 @@ export default function PosPage() {
       });
 
       if (found) {
-        // Si está en la pestaña de Sobrantes, aplicar automáticamente el descuento seleccionado
-        const isLeftover = selectedCategoria === "SOBRANTES_PASTELERIA" && isPastryLeftover(found);
-        addToCart(found, 1, isLeftover ? sobranteDiscountPercent : undefined);
+        handleProductSelect(found);
         playScanBeep();
-        setScanSuccessMsg(`✅ Agregado: ${found.nombre} (${formatCLP(found.precio_venta)})`);
+        setScanSuccessMsg(`✅ Código detectado: ${found.nombre}`);
         setTimeout(() => setScanSuccessMsg(null), 3000);
       } else {
         setErrorMessage(`No se encontró ningún producto con el código "${raw}".`);
@@ -246,7 +331,7 @@ export default function PosPage() {
   // Hook universal para pistolas USB y apps Wi-Fi
   useBarcodeListener({
     onScan: handleBarcodeScanned,
-    enabled: !isScannerOpen && !itemDescuentoModal,
+    enabled: !isScannerOpen && !itemDescuentoModal && !loteSelectModal,
     maxKeyInterval: 600,
   });
 
@@ -255,7 +340,8 @@ export default function PosPage() {
     return productos.filter((p) => {
       let matchCat = true;
       if (selectedCategoria === "SOBRANTES_PASTELERIA") {
-        matchCat = isPastryLeftover(p);
+        const b = getPastryStockBreakdown(p);
+        matchCat = b.isPastry && b.stockSobrante > 0;
       } else if (selectedCategoria !== "ALL") {
         matchCat = p.categoria_id === selectedCategoria;
       }
@@ -304,6 +390,7 @@ export default function PosPage() {
         costo_unitario: it.producto.precio_compra || 0,
         descuento: it.descuento_unitario || 0,
         motivo_descuento: it.motivo_descuento || undefined,
+        tipo_lote: it.tipo_lote || "FRESCO",
       })),
     };
 
@@ -397,14 +484,28 @@ export default function PosPage() {
           cart.map((item, idx) => {
             const hasDiscount = item.descuento_unitario && item.descuento_unitario > 0;
             const precioEfectivo = item.precio_unitario - (item.descuento_unitario || 0);
+            const isSobrante = item.tipo_lote === "SOBRANTE";
 
             return (
-              <div key={item.producto.id} className="pt-2 first:pt-0 space-y-1.5 text-xs">
+              <div key={`${item.producto.id}_${item.tipo_lote || "FRESCO"}`} className="pt-2 first:pt-0 space-y-1.5 text-xs">
                 <div className="flex items-center justify-between">
                   <div className="flex-1 pr-2 min-w-0">
-                    <p className="font-bold text-slate-900 truncate text-xs leading-tight">
-                      {item.producto.nombre}
-                    </p>
+                    <div className="flex items-center space-x-1.5">
+                      <p className="font-bold text-slate-900 truncate text-xs leading-tight">
+                        {item.producto.nombre}
+                      </p>
+                      {/* Distintivo de Lote */}
+                      {isSobrante ? (
+                        <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-extrabold flex-shrink-0">
+                          Añejo/Sobrante
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 text-[9px] font-bold flex-shrink-0">
+                          Fresco
+                        </span>
+                      )}
+                    </div>
+
                     <div className="flex items-center space-x-1.5 text-[11px] text-slate-500 mt-0.5">
                       {hasDiscount ? (
                         <>
@@ -427,7 +528,7 @@ export default function PosPage() {
                   <div className="flex items-center space-x-1.5 flex-shrink-0">
                     <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50">
                       <button
-                        onClick={() => updateQuantity(item.producto.id, -1)}
+                        onClick={() => updateQuantity(item.producto.id, item.tipo_lote, -1)}
                         className="p-1 text-slate-600 hover:bg-slate-200 active:bg-slate-300 rounded-l"
                       >
                         <Minus className="w-3 h-3" />
@@ -436,7 +537,7 @@ export default function PosPage() {
                         {item.cantidad}
                       </span>
                       <button
-                        onClick={() => updateQuantity(item.producto.id, 1)}
+                        onClick={() => updateQuantity(item.producto.id, item.tipo_lote, 1)}
                         className="p-1 text-slate-600 hover:bg-slate-200 active:bg-slate-300 rounded-r"
                       >
                         <Plus className="w-3 h-3" />
@@ -448,7 +549,7 @@ export default function PosPage() {
                     </span>
 
                     <button
-                      onClick={() => removeFromCart(item.producto.id)}
+                      onClick={() => removeFromCart(item.producto.id, item.tipo_lote)}
                       className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
                       title="Quitar producto"
                     >
@@ -723,7 +824,7 @@ export default function PosPage() {
                   const stockActual = Number(p.stock_actual) || 0;
                   const isOutOfStock = stockActual <= 0;
                   const isLowStock = stockActual <= p.stock_minimo && !isOutOfStock;
-                  const isLeftover = isPastryLeftover(p);
+                  const breakdown = getPastryStockBreakdown(p);
 
                   // Si está en la pestaña de Sobrantes o es sobrante, mostrar precio rebajado
                   const isDiscountSection = selectedCategoria === "SOBRANTES_PASTELERIA";
@@ -734,16 +835,15 @@ export default function PosPage() {
                   return (
                     <div
                       key={p.id}
-                      onClick={() =>
-                        !isOutOfStock &&
-                        addToCart(p, 1, isDiscountSection ? sobranteDiscountPercent : undefined)
-                      }
+                      onClick={() => !isOutOfStock && handleProductSelect(p)}
                       className={`bg-white border rounded-xl p-3 flex flex-col justify-between transition-all cursor-pointer select-none relative ${
                         isOutOfStock
                           ? "border-slate-200 opacity-50 cursor-not-allowed bg-slate-50"
                           : isDiscountSection
                           ? "border-amber-300 hover:border-amber-500 hover:shadow-md active:scale-98 bg-amber-50/30"
-                          : isLeftover
+                          : breakdown.hasBoth
+                          ? "border-amber-300 hover:border-[#3a4d6b] hover:shadow-md active:scale-98 bg-gradient-to-b from-white to-amber-50/20"
+                          : breakdown.stockSobrante > 0
                           ? "border-amber-200 hover:border-amber-400 hover:shadow-xs active:scale-98 bg-amber-50/10"
                           : "border-slate-200 hover:border-[#3a4d6b] hover:shadow-xs active:scale-98"
                       }`}
@@ -764,15 +864,24 @@ export default function PosPage() {
                           </span>
                         </div>
 
-                        {/* Badge identificador de Sobrante del Día Anterior */}
-                        {isLeftover && (
+                        {/* Badges de Lotes (Doble lote o Sobrante) */}
+                        {breakdown.hasBoth ? (
+                          <div className="flex flex-wrap gap-1 mb-1.5">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                              🟢 Frescos: {breakdown.stockFresco}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
+                              🟡 Añejos (-{sobranteDiscountPercent}%): {breakdown.stockSobrante}
+                            </span>
+                          </div>
+                        ) : breakdown.stockSobrante > 0 ? (
                           <div className="mb-1">
                             <span className="px-1.5 py-0.5 rounded text-[9.5px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 flex items-center space-x-1 w-fit">
                               <Clock className="w-2.5 h-2.5" />
-                              <span>Lote Día Anterior</span>
+                              <span>Lote Día Anterior ({breakdown.stockSobrante} u.)</span>
                             </span>
                           </div>
-                        )}
+                        ) : null}
 
                         <h4 className="font-bold text-slate-900 text-xs leading-snug line-clamp-2">
                           {p.nombre}
@@ -878,6 +987,99 @@ export default function PosPage() {
         </div>
       )}
 
+      {/* MODAL SELECTOR DE LOTE (FRESCO VS. AÑEJO / SOBRANTE) */}
+      {loteSelectModal && (() => {
+        const b = getPastryStockBreakdown(loteSelectModal);
+        const precioSobrante = Math.round(loteSelectModal.precio_venta * (1 - sobranteDiscountPercent / 100));
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-fadeIn">
+            <div className="relative w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-200 bg-slate-50">
+                <div className="flex items-center space-x-2">
+                  <Cake className="w-5 h-5 text-amber-700" />
+                  <div>
+                    <h3 className="font-bold text-sm text-slate-900">
+                      ¿Qué lote vas a vender?
+                    </h3>
+                    <p className="text-[11px] text-slate-500 truncate max-w-[260px]">
+                      {loteSelectModal.nombre}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setLoteSelectModal(null)}
+                  className="p-1 rounded-full text-slate-400 hover:bg-slate-200"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-3">
+                <p className="text-xs text-slate-600 font-medium">
+                  Este producto tiene tanto unidades recién horneadas hoy como sobrantes del día anterior. Elige la opción adecuada:
+                </p>
+
+                {/* Opción 1: Fresco del Día */}
+                <button
+                  type="button"
+                  onClick={() => addToCart(loteSelectModal, 1, undefined, "FRESCO")}
+                  className="w-full p-4 rounded-xl border-2 border-emerald-500 bg-emerald-50/50 hover:bg-emerald-50 text-left transition-all hover:scale-101 flex items-center justify-between group shadow-2xs cursor-pointer"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <SunMedium className="w-4 h-4 text-emerald-700" />
+                      <span className="font-extrabold text-sm text-emerald-950">
+                        1. Fresco del Día (Normal)
+                      </span>
+                    </div>
+                    <p className="text-xs text-emerald-800">
+                      Elaboración de hoy • <b className="font-mono">{b.stockFresco} unidades disponibles</b>
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-base font-extrabold font-mono text-emerald-900 block">
+                      {formatCLP(loteSelectModal.precio_venta)}
+                    </span>
+                    <span className="text-[10px] text-emerald-700 font-bold">Precio Regular</span>
+                  </div>
+                </button>
+
+                {/* Opción 2: Añejo / Sobrante con Descuento */}
+                <button
+                  type="button"
+                  onClick={() => addToCart(loteSelectModal, 1, sobranteDiscountPercent, "SOBRANTE")}
+                  className="w-full p-4 rounded-xl border-2 border-amber-500 bg-amber-50/60 hover:bg-amber-50 text-left transition-all hover:scale-101 flex items-center justify-between group shadow-2xs cursor-pointer"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <Clock className="w-4 h-4 text-amber-800" />
+                      <span className="font-extrabold text-sm text-amber-950">
+                        2. Lote Día Anterior (-{sobranteDiscountPercent}%)
+                      </span>
+                    </div>
+                    <p className="text-xs text-amber-800">
+                      Sobrante de ayer • <b className="font-mono">{b.stockSobrante} unidades disponibles</b>
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xs text-slate-400 line-through font-mono block">
+                      {formatCLP(loteSelectModal.precio_venta)}
+                    </span>
+                    <span className="text-base font-extrabold font-mono text-amber-900 block">
+                      {formatCLP(precioSobrante)}
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded bg-amber-200 text-amber-950 text-[10px] font-extrabold">
+                      -{sobranteDiscountPercent}%
+                    </span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* MODAL DESCUENTO INDIVIDUAL POR PRODUCTO */}
       {itemDescuentoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs animate-fadeIn">
@@ -919,6 +1121,7 @@ export default function PosPage() {
                       const desc = Math.round(itemDescuentoModal.item.precio_unitario * 0.3);
                       applyItemDiscount(
                         itemDescuentoModal.item.producto.id,
+                        itemDescuentoModal.item.tipo_lote,
                         desc,
                         "Pastel día anterior (-30%)",
                         30
@@ -938,6 +1141,7 @@ export default function PosPage() {
                       const desc = Math.round(itemDescuentoModal.item.precio_unitario * 0.2);
                       applyItemDiscount(
                         itemDescuentoModal.item.producto.id,
+                        itemDescuentoModal.item.tipo_lote,
                         desc,
                         "Pastel día anterior (-20%)",
                         20
@@ -957,6 +1161,7 @@ export default function PosPage() {
                       const desc = Math.round(itemDescuentoModal.item.precio_unitario * 0.5);
                       applyItemDiscount(
                         itemDescuentoModal.item.producto.id,
+                        itemDescuentoModal.item.tipo_lote,
                         desc,
                         "Liquidación 50%",
                         50
@@ -973,7 +1178,7 @@ export default function PosPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      applyItemDiscount(itemDescuentoModal.item.producto.id, 0);
+                      applyItemDiscount(itemDescuentoModal.item.producto.id, itemDescuentoModal.item.tipo_lote, 0);
                     }}
                     className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 text-xs font-bold text-left transition-colors shadow-2xs"
                   >

@@ -92,11 +92,22 @@ export async function POST(req: Request) {
       const itemSubtotal = Math.max(0, (item.precio_unitario - itemDescuentoUnitario) * item.cantidad);
       subtotal += itemSubtotal;
 
-      // Descuento atómico de stock en producto
-      batchStatements.push({
-        sql: `UPDATE productos SET stock_actual = stock_actual - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-        args: [item.cantidad, item.producto_id],
-      });
+      // Descuento atómico de stock en producto (soporta descuento de lote sobrante si aplica)
+      if (item.tipo_lote === "SOBRANTE") {
+        batchStatements.push({
+          sql: `UPDATE productos 
+                SET stock_actual = MAX(0, stock_actual - ?),
+                    stock_sobrante = MAX(0, COALESCE(stock_sobrante, 0) - ?),
+                    updated_at = CURRENT_TIMESTAMP 
+                WHERE id = ?`,
+          args: [item.cantidad, item.cantidad, item.producto_id],
+        });
+      } else {
+        batchStatements.push({
+          sql: `UPDATE productos SET stock_actual = MAX(0, stock_actual - ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+          args: [item.cantidad, item.producto_id],
+        });
+      }
 
       // Detalle de venta
       const detalleId = generateUUID();

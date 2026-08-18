@@ -84,6 +84,7 @@ export interface Producto {
   precio_venta: number;
   stock_actual: number;
   stock_minimo: number;
+  stock_sobrante?: number; // Stock de días anteriores (añejo/liquidación)
   unidad_medida: string;
   imagen_url?: string | null;
   fecha_elaboracion?: string | null; // YYYY-MM-DD
@@ -122,6 +123,7 @@ export interface DetalleVenta {
   subtotal: number;
   descuento?: number;
   motivo_descuento?: string;
+  tipo_lote?: 'FRESCO' | 'SOBRANTE';
   producto_nombre?: string;
   producto_sku?: number;
 }
@@ -150,6 +152,7 @@ export interface CartItem {
   descuento_unitario?: number;
   descuento_porcentaje?: number;
   motivo_descuento?: string;
+  tipo_lote?: 'FRESCO' | 'SOBRANTE';
   subtotal: number;
 }
 
@@ -167,6 +170,7 @@ export interface ProcesarVentaPayload {
     costo_unitario: number;
     descuento?: number;
     motivo_descuento?: string;
+    tipo_lote?: 'FRESCO' | 'SOBRANTE';
   }[];
 }
 

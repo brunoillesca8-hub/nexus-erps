@@ -47,7 +47,17 @@ interface ErpContextType {
 
   // Operaciones
   procesarVenta: (payload: ProcesarVentaPayload) => Promise<{ success: boolean; folio?: number; error?: string; ventaId?: string }>;
-  ajustarStock: (productoId: string, cantidad: number, motivo: string, tipo?: TipoMovimiento) => Promise<{ success: boolean; error?: string }>;
+  ajustarStock: (
+    productoId: string,
+    cantidad: number,
+    motivo: string,
+    tipo?: TipoMovimiento,
+    empresaId?: string,
+    sucursalId?: string,
+    fechaElaboracion?: string,
+    fechaVencimiento?: string,
+    esNuevaElaboracion?: boolean
+  ) => Promise<{ success: boolean; error?: string }>;
   agregarProductosLote: (items: Partial<Producto>[]) => Promise<{ success: boolean; count?: number; error?: string }>;
   guardarProducto: (producto: Partial<Producto>) => Promise<{ success: boolean; producto?: Producto; error?: string }>;
   eliminarProducto: (id: string) => Promise<{ success: boolean; error?: string }>;
@@ -283,7 +293,17 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   };
 
   // 3. Ajustar Stock
-  const ajustarStock = async (productoId: string, cantidad: number, motivo: string, tipo?: TipoMovimiento) => {
+  const ajustarStock = async (
+    productoId: string,
+    cantidad: number,
+    motivo: string,
+    tipo?: TipoMovimiento,
+    empresaId?: string,
+    sucursalId?: string,
+    fechaElaboracion?: string,
+    fechaVencimiento?: string,
+    esNuevaElaboracion?: boolean
+  ) => {
     try {
       const res = await fetch("/api/inventario/ajuste", {
         method: "POST",
@@ -293,7 +313,11 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
           cantidad,
           motivo,
           tipo,
-          empresa_id: empresa?.id,
+          empresa_id: empresaId || empresa?.id,
+          sucursal_id: sucursalId,
+          fecha_elaboracion: fechaElaboracion,
+          fecha_vencimiento: fechaVencimiento,
+          es_nueva_elaboracion: esNuevaElaboracion,
         }),
       });
 

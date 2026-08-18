@@ -204,3 +204,54 @@ export function isPastryLeftover(producto: {
 
   return false;
 }
+
+/**
+ * Desglosa el inventario de un producto de pastelería entre lote Fresco del Día y lote Añejo/Sobrante
+ */
+export function getPastryStockBreakdown(producto: {
+  categoria_id?: string | null;
+  stock_actual?: number;
+  stock_sobrante?: number;
+  fecha_elaboracion?: string | null;
+  created_at?: string | null;
+}): {
+  isPastry: boolean;
+  stockTotal: number;
+  stockSobrante: number;
+  stockFresco: number;
+  hasBoth: boolean;
+} {
+  const isPasteleria = Boolean(
+    producto.categoria_id === "cat_pasteleria" ||
+    producto.categoria_id?.toLowerCase().includes("pastel")
+  );
+
+  const stockTotal = Number(producto.stock_actual) || 0;
+  if (!isPasteleria || stockTotal <= 0) {
+    return {
+      isPastry: isPasteleria,
+      stockTotal,
+      stockSobrante: 0,
+      stockFresco: stockTotal,
+      hasBoth: false,
+    };
+  }
+
+  let explicitSobrante = Number(producto.stock_sobrante) || 0;
+
+  // Si no tiene stock_sobrante explícito pero el producto califica como sobrante por fecha/hora
+  if (explicitSobrante === 0 && isPastryLeftover(producto)) {
+    explicitSobrante = stockTotal;
+  }
+
+  const stockSobrante = Math.min(stockTotal, Math.max(0, explicitSobrante));
+  const stockFresco = Math.max(0, stockTotal - stockSobrante);
+
+  return {
+    isPastry: true,
+    stockTotal,
+    stockSobrante,
+    stockFresco,
+    hasBoth: stockSobrante > 0 && stockFresco > 0,
+  };
+}

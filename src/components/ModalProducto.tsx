@@ -20,7 +20,7 @@ export default function ModalProducto({
   productoEditar,
   initialBarcode,
 }: ModalProductoProps) {
-  const { categorias, proveedores, guardarProducto, generarSiguienteSKU } = useErp();
+  const { productos, categorias, proveedores, guardarProducto, generarSiguienteSKU } = useErp();
 
   const [formData, setFormData] = useState<Partial<Producto>>({
     nombre: "",
@@ -34,11 +34,54 @@ export default function ModalProducto({
     stock_minimo: 5,
     unidad_medida: "unidad",
     imagen_url: "",
+    fecha_elaboracion: new Date().toISOString().slice(0, 10),
+    fecha_vencimiento: "",
   });
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [existingFoundMsg, setExistingFoundMsg] = useState<string | null>(null);
+
+  // Función para autocompletar si el código de barras o SKU ya existe en la base de datos
+  const tryAutoFillExisting = (queryBarcodeOrSku: string) => {
+    const raw = queryBarcodeOrSku.trim();
+    if (!raw) return;
+
+    const noLeadingZeros = raw.replace(/^0+/, "");
+    const found = productos.find((p) => {
+      const pBarcode = (p.codigo_barras || "").trim();
+      const pSku = (p.sku || "").toString().trim();
+      return (
+        pBarcode === raw ||
+        (pBarcode && pBarcode === noLeadingZeros) ||
+        pSku === raw
+      );
+    });
+
+    if (found) {
+      setFormData((prev) => ({
+        ...prev,
+        id: found.id,
+        nombre: found.nombre,
+        sku: found.sku,
+        codigo_barras: found.codigo_barras || raw,
+        categoria_id: found.categoria_id || "",
+        proveedor_id: found.proveedor_id || "",
+        precio_compra: found.precio_compra,
+        precio_venta: found.precio_venta,
+        stock_actual: found.stock_actual,
+        stock_minimo: found.stock_minimo,
+        unidad_medida: found.unidad_medida,
+        imagen_url: found.imagen_url || "",
+        fecha_elaboracion: new Date().toISOString().slice(0, 10),
+        fecha_vencimiento: found.fecha_vencimiento || "",
+      }));
+      setExistingFoundMsg(
+        `✨ Producto existente detectado: "${found.nombre}" (SKU #${found.sku}). Datos autocompletados. Solo modifica la cantidad y la fecha de vencimiento.`
+      );
+    }
+  };
 
   // Bandera para evitar re-inicializaciones accidentales que borren los datos ingresados
   const prevIsOpenRef = useRef(false);
@@ -46,6 +89,7 @@ export default function ModalProducto({
   useEffect(() => {
     // Solo inicializar cuando el modal pasa de cerrado a abierto
     if (isOpen && !prevIsOpenRef.current) {
+      setExistingFoundMsg(null);
       if (productoEditar) {
         setFormData({ ...productoEditar });
       } else {
@@ -62,7 +106,13 @@ export default function ModalProducto({
             stock_minimo: 5,
             unidad_medida: "unidad",
             imagen_url: "",
+            fecha_elaboracion: new Date().toISOString().slice(0, 10),
+            fecha_vencimiento: "",
           });
+
+          if (initialBarcode) {
+            tryAutoFillExisting(initialBarcode);
+          }
         });
       }
       setError(null);
@@ -70,12 +120,13 @@ export default function ModalProducto({
     prevIsOpenRef.current = isOpen;
   }, [isOpen, productoEditar, initialBarcode, categorias, proveedores, generarSiguienteSKU]);
 
-  // Si el usuario escanea con pistola láser o app Wi-Fi mientras llena el formulario, asignar solo el código de barras
+  // Si el usuario escanea con pistola láser o app Wi-Fi mientras llena el formulario, asignar y autocompletar
   useBarcodeListener({
     onScan: (scannedCode) => {
       const clean = scannedCode.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
       if (clean) {
         setFormData((prev) => ({ ...prev, codigo_barras: clean }));
+        tryAutoFillExisting(clean);
       }
     },
     enabled: isOpen && !isScannerOpen,
@@ -141,9 +192,9 @@ export default function ModalProducto({
 
           {/* Formulario */}
           <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4">
-            {error && (
-              <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs">
-                {error}
+            {existingFoundMsg && (
+              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-bold animate-fadeIn">
+                {existingFoundMsg}
               </div>
             )}
 
@@ -173,9 +224,12 @@ export default function ModalProducto({
                     type="text"
                     placeholder="Ej: 780000000004 o escanea con la cámara / pistola"
                     value={formData.codigo_barras || ""}
-                    onChange={(e) =>
-                      setFormData({ ...formData, codigo_barras: e.target.value })
-                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFormData({ ...formData, codigo_barras: val });
+                      tryAutoFillExisting(val);
+                    }}
+                    onBlur={(e) => tryAutoFillExisting(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 text-slate-900 font-mono rounded-lg pl-3 pr-10 py-2 text-xs sm:text-sm focus:bg-white focus:ring-1 focus:ring-slate-500 focus:outline-none font-bold"
                   />
                   <button
