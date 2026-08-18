@@ -146,6 +146,9 @@ export interface CartItem {
   producto: Producto;
   cantidad: number;
   precio_unitario: number;
+  descuento_unitario?: number;
+  descuento_porcentaje?: number;
+  motivo_descuento?: string;
   subtotal: number;
 }
 
@@ -161,6 +164,8 @@ export interface ProcesarVentaPayload {
     cantidad: number;
     precio_unitario: number;
     costo_unitario: number;
+    descuento?: number;
+    motivo_descuento?: string;
   }[];
 }
 

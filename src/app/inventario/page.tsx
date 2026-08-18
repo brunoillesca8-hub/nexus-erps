@@ -5,15 +5,18 @@ import {
   Search,
   Download,
   ChevronDown,
+  FileText,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useErp } from "@/context/erp-context";
 import { formatDateTime, matchesSearch } from "@/lib/utils";
+import ModalImportarFactura from "@/components/ModalImportarFactura";
 
 export default function InventarioPage() {
   const { movimientos, productos } = useErp();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTipo, setSelectedTipo] = useState("ALL");
+  const [isFacturaModalOpen, setIsFacturaModalOpen] = useState(false);
 
   // Mapeo rápido de productoId -> producto completo para obtener codigo_barras
   const productosMap = useMemo(() => {
@@ -74,13 +77,25 @@ export default function InventarioPage() {
           </p>
         </div>
 
-        <button
-          onClick={exportToExcel}
-          className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-[#3a4d6b] hover:bg-slate-700 text-white text-xs font-bold shadow-xs transition-colors self-start sm:self-auto"
-        >
-          <Download className="w-3.5 h-3.5" />
-          <span>Exportar Kardex (CSV)</span>
-        </button>
+        <div className="flex items-center space-x-2">
+          {/* Botón Cargar Factura Proveedor */}
+          <button
+            onClick={() => setIsFacturaModalOpen(true)}
+            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-300 shadow-2xs transition-colors"
+            title="Importar Factura Electrónica del SII (XML) o Excel"
+          >
+            <FileText className="w-3.5 h-3.5 text-emerald-700" />
+            <span>Cargar Factura</span>
+          </button>
+
+          <button
+            onClick={exportToExcel}
+            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-[#3a4d6b] hover:bg-slate-700 text-white text-xs font-bold shadow-xs transition-colors self-start sm:self-auto"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Exportar Kardex (CSV)</span>
+          </button>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -190,6 +205,12 @@ export default function InventarioPage() {
           </table>
         </div>
       </div>
+
+      {/* Modal Importar Factura Proveedor XML/Excel */}
+      <ModalImportarFactura
+        isOpen={isFacturaModalOpen}
+        onClose={() => setIsFacturaModalOpen(false)}
+      />
     </div>
   );
 }

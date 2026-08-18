@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import React, { useState, useRef, useMemo, useCallback } from "react";
 import {
   Search,
   Camera,
@@ -12,10 +12,12 @@ import {
   Banknote,
   Smartphone,
   CheckCircle2,
-  AlertCircle,
   Package,
   X,
   ChevronUp,
+  Percent,
+  Tag,
+  Cake,
 } from "lucide-react";
 import { useErp } from "@/context/erp-context";
 import { formatCLP, matchesSearch } from "@/lib/utils";
@@ -33,7 +35,7 @@ export default function PosPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedClienteId, setSelectedClienteId] = useState<string>("cli_default");
   const [metodoPago, setMetodoPago] = useState<MetodoPago>("EFECTIVO");
-  const [descuento, setDescuento] = useState<number>(0);
+  const [descuentoGeneral, setDescuentoGeneral] = useState<number>(0);
   const [notas, setNotas] = useState<string>("");
 
   // Modales y Drawer Móvil
@@ -43,10 +45,31 @@ export default function PosPage() {
   const [completedVenta, setCompletedVenta] = useState<Venta | null>(null);
   const [isTicketModalOpen, setIsTicketModalOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [scanSuccessMsg, setScanSuccessMsg] = useState<string | null>(null);
 
-  // Buffer de hardware pistola láser
-  const barcodeBufferRef = useRef<string>("");
-  const lastKeyTimeRef = useRef<number>(0);
+  // Modal de descuento individual por item
+  const [itemDescuentoModal, setItemDescuentoModal] = useState<{
+    item: CartItem;
+    index: number;
+  } | null>(null);
+
+  const playScanBeep = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(2200, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.09);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.09);
+    } catch {
+      // Ignorar
+    }
+  };
 
   const addToCart = (producto: Producto, cantidad = 1) => {
     if (producto.stock_actual <= 0) {
@@ -66,10 +89,11 @@ export default function PosPage() {
           return prevCart;
         }
         const updated = [...prevCart];
+        const descUnit = item.descuento_unitario || 0;
         updated[existingIndex] = {
           ...item,
           cantidad: newQty,
-          subtotal: newQty * item.precio_unitario,
+          subtotal: Math.max(0, (item.precio_unitario - descUnit) * newQty),
         };
         return updated;
       } else {
@@ -79,6 +103,7 @@ export default function PosPage() {
             producto,
             cantidad,
             precio_unitario: producto.precio_venta,
+            descuento_unitario: 0,
             subtotal: producto.precio_venta * cantidad,
           },
         ];
@@ -98,10 +123,11 @@ export default function PosPage() {
               setTimeout(() => setErrorMessage(null), 3000);
               return item;
             }
+            const descUnit = item.descuento_unitario || 0;
             return {
               ...item,
               cantidad: newQty,
-              subtotal: newQty * item.precio_unitario,
+              subtotal: Math.max(0, (item.precio_unitario - descUnit) * newQty),
             };
           }
           return item;
@@ -110,34 +136,38 @@ export default function PosPage() {
     });
   };
 
+  const applyItemDiscount = (
+    productoId: string,
+    descuentoUnitario: number,
+    motivo?: string,
+    porcentaje?: number
+  ) => {
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.producto.id === productoId) {
+          const descVal = Math.min(item.precio_unitario, Math.max(0, descuentoUnitario));
+          return {
+            ...item,
+            descuento_unitario: descVal,
+            descuento_porcentaje: porcentaje,
+            motivo_descuento: motivo,
+            subtotal: Math.max(0, (item.precio_unitario - descVal) * item.cantidad),
+          };
+        }
+        return item;
+      })
+    );
+    setItemDescuentoModal(null);
+  };
+
   const removeFromCart = (productoId: string) => {
     setCart((prev) => prev.filter((it) => it.producto.id !== productoId));
   };
 
   const clearCart = () => {
     setCart([]);
-    setDescuento(0);
+    setDescuentoGeneral(0);
     setNotas("");
-  };
-
-  const [scanSuccessMsg, setScanSuccessMsg] = useState<string | null>(null);
-
-  const playScanBeep = () => {
-    try {
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(1900, audioCtx.currentTime);
-      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.12);
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.12);
-    } catch {
-      // Ignorar
-    }
   };
 
   const handleBarcodeScanned = useCallback(
@@ -176,10 +206,10 @@ export default function PosPage() {
     [productos]
   );
 
-  // Hook universal para pistolas USB, apps Wi-Fi ("Barcode to PC") y eventos Paste
+  // Hook universal para pistolas USB y apps Wi-Fi
   useBarcodeListener({
     onScan: handleBarcodeScanned,
-    enabled: true,
+    enabled: !isScannerOpen && !itemDescuentoModal,
     maxKeyInterval: 600,
   });
 
@@ -199,7 +229,11 @@ export default function PosPage() {
   // Cálculos
   const totalItemsCount = cart.reduce((acc, it) => acc + it.cantidad, 0);
   const subtotal = cart.reduce((acc, it) => acc + it.subtotal, 0);
-  const baseImponible = Math.max(0, subtotal - Number(descuento || 0));
+  const totalDescuentosItems = cart.reduce(
+    (acc, it) => acc + (it.descuento_unitario || 0) * it.cantidad,
+    0
+  );
+  const baseImponible = Math.max(0, subtotal - Number(descuentoGeneral || 0));
   const ivaCalculado = Math.round((baseImponible * 19) / 119);
   const total = baseImponible;
 
@@ -217,13 +251,15 @@ export default function PosPage() {
       sucursal_id: sucursales[0]?.id || "suc_default",
       cliente_id: selectedClienteId || null,
       metodo_pago: metodoPago,
-      descuento: Number(descuento) || 0,
+      descuento: Number(descuentoGeneral) || 0,
       notas: notas || null,
       items: cart.map((it) => ({
         producto_id: it.producto.id,
         cantidad: it.cantidad,
         precio_unitario: it.precio_unitario,
         costo_unitario: it.producto.precio_compra || 0,
+        descuento: it.descuento_unitario || 0,
+        motivo_descuento: it.motivo_descuento || undefined,
       })),
     };
 
@@ -238,7 +274,7 @@ export default function PosPage() {
         cliente_id: payload.cliente_id,
         numero_folio: res.folio,
         subtotal,
-        descuento: Number(descuento) || 0,
+        descuento: (Number(descuentoGeneral) || 0) + totalDescuentosItems,
         impuesto: ivaCalculado,
         total,
         metodo_pago: metodoPago,
@@ -257,7 +293,7 @@ export default function PosPage() {
     }
   };
 
-  // Componente de contenido del Carrito (reutilizado en Desktop y Drawer Móvil)
+  // Componente de contenido del Carrito
   const CartContent = (
     <div className="flex flex-col h-full justify-between">
       {/* Header Carrito */}
@@ -310,45 +346,86 @@ export default function PosPage() {
             <p className="text-[10px] text-slate-400 mt-0.5">Toca un producto para añadirlo</p>
           </div>
         ) : (
-          cart.map((item) => (
-            <div key={item.producto.id} className="pt-2.5 first:pt-0 flex items-center justify-between text-xs">
-              <div className="flex-1 pr-2 min-w-0">
-                <p className="font-bold text-slate-900 truncate leading-tight">{item.producto.nombre}</p>
-                <p className="text-[11px] text-slate-500">{formatCLP(item.precio_unitario)} c/u</p>
-              </div>
+          cart.map((item, idx) => {
+            const hasDiscount = item.descuento_unitario && item.descuento_unitario > 0;
+            const precioEfectivo = item.precio_unitario - (item.descuento_unitario || 0);
 
-              <div className="flex items-center space-x-1.5 flex-shrink-0">
-                <div className="flex items-center rounded border border-slate-300 bg-white">
-                  <button
-                    onClick={() => updateQuantity(item.producto.id, -1)}
-                    className="p-1.5 text-slate-600 hover:bg-slate-100 active:bg-slate-200"
-                  >
-                    <Minus className="w-3 h-3" />
-                  </button>
-                  <span className="px-2 font-bold text-slate-800 min-w-[20px] text-center text-xs">
-                    {item.cantidad}
-                  </span>
-                  <button
-                    onClick={() => updateQuantity(item.producto.id, 1)}
-                    className="p-1.5 text-slate-600 hover:bg-slate-100 active:bg-slate-200"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </button>
+            return (
+              <div key={item.producto.id} className="pt-2.5 first:pt-0 space-y-1 text-xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1 pr-2 min-w-0">
+                    <p className="font-bold text-slate-900 truncate leading-tight">{item.producto.nombre}</p>
+                    <div className="flex items-center space-x-1.5 text-[11px] text-slate-500">
+                      {hasDiscount ? (
+                        <>
+                          <span className="line-through text-slate-400 font-mono">
+                            {formatCLP(item.precio_unitario)}
+                          </span>
+                          <span className="font-bold text-emerald-700 font-mono">
+                            {formatCLP(precioEfectivo)} c/u
+                          </span>
+                        </>
+                      ) : (
+                        <span>{formatCLP(item.precio_unitario)} c/u</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-1.5 flex-shrink-0">
+                    <div className="flex items-center rounded border border-slate-300 bg-white">
+                      <button
+                        onClick={() => updateQuantity(item.producto.id, -1)}
+                        className="p-1.5 text-slate-600 hover:bg-slate-100 active:bg-slate-200"
+                      >
+                        <Minus className="w-3 h-3" />
+                      </button>
+                      <span className="px-2 font-bold text-slate-800 min-w-[20px] text-center text-xs">
+                        {item.cantidad}
+                      </span>
+                      <button
+                        onClick={() => updateQuantity(item.producto.id, 1)}
+                        className="p-1.5 text-slate-600 hover:bg-slate-100 active:bg-slate-200"
+                      >
+                        <Plus className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    <span className="font-bold text-slate-900 min-w-[60px] text-right font-mono">
+                      {formatCLP(item.subtotal)}
+                    </span>
+
+                    <button
+                      onClick={() => removeFromCart(item.producto.id)}
+                      className="p-1 text-slate-400 hover:text-rose-600 ml-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
-                <span className="font-bold text-slate-900 min-w-[60px] text-right font-mono">
-                  {formatCLP(item.subtotal)}
-                </span>
+                {/* Botón de Descuento por Ítem (ej. Pastelería del día anterior) */}
+                <div className="flex items-center justify-between text-[10px] pl-1">
+                  {hasDiscount ? (
+                    <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded font-semibold flex items-center space-x-1">
+                      <Tag className="w-3 h-3" />
+                      <span>{item.motivo_descuento || `Desc: -${formatCLP(item.descuento_unitario || 0)}`}</span>
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">Sin descuento aplicado</span>
+                  )}
 
-                <button
-                  onClick={() => removeFromCart(item.producto.id)}
-                  className="p-1 text-slate-400 hover:text-rose-600 ml-1"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setItemDescuentoModal({ item, index: idx })}
+                    className="text-[#3a4d6b] hover:underline font-bold flex items-center space-x-0.5"
+                  >
+                    <Percent className="w-3 h-3" />
+                    <span>{hasDiscount ? "Modificar Desc." : "+ Descuento (Día Anterior)"}</span>
+                  </button>
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -391,6 +468,12 @@ export default function PosPage() {
             <span>Subtotal:</span>
             <span className="font-mono">{formatCLP(subtotal)}</span>
           </div>
+          {totalDescuentosItems > 0 && (
+            <div className="flex justify-between text-emerald-700 font-semibold">
+              <span>Descuentos Ítems:</span>
+              <span className="font-mono">-{formatCLP(totalDescuentosItems)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-slate-600">
             <span>IVA (19% inc.):</span>
             <span className="font-mono">{formatCLP(ivaCalculado)}</span>
@@ -444,7 +527,7 @@ export default function PosPage() {
             </button>
           </div>
 
-          {/* Categorías Tabs */}
+          {/* Categorías Tabs (Incluye Pastelería destacada) */}
           <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 scrollbar-none">
             <button
               onClick={() => setSelectedCategoria("ALL")}
@@ -456,193 +539,298 @@ export default function PosPage() {
             >
               Todos ({productos.length})
             </button>
-            {categorias.map((cat) => {
-              const isSelected = selectedCategoria === cat.id;
+            {categorias.map((c) => {
+              const isPasteleria = c.id === "cat_pasteleria" || c.nombre.toLowerCase().includes("pastel");
               return (
                 <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategoria(cat.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
-                    isSelected
+                  key={c.id}
+                  onClick={() => setSelectedCategoria(c.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors flex items-center space-x-1 ${
+                    selectedCategoria === c.id
                       ? "bg-[#3a4d6b] text-white shadow-2xs"
+                      : isPasteleria
+                      ? "bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-200 font-bold"
                       : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
                   }`}
                 >
-                  {cat.nombre}
+                  {isPasteleria && <Cake className="w-3.5 h-3.5 text-amber-600" />}
+                  <span>{c.nombre}</span>
                 </button>
               );
             })}
           </div>
 
-          {/* Alertas de Escaneo y Error */}
+          {/* Toast de confirmación de escaneo */}
           {scanSuccessMsg && (
-            <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center space-x-2 animate-fadeIn font-semibold shadow-2xs">
+            <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center space-x-2 animate-fadeIn shadow-2xs">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
               <span>{scanSuccessMsg}</span>
             </div>
           )}
 
+          {/* Mensaje de Error */}
           {errorMessage && (
-            <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center space-x-2 animate-fadeIn">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center justify-between animate-fadeIn">
               <span>{errorMessage}</span>
+              <button onClick={() => setErrorMessage(null)}>
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
           )}
 
-          {/* Grid / Lista de Productos (1 col en móvil, 2 en tablet, 3-4 en desktop) */}
-          <div className="space-y-2">
+          {/* Grid de Productos */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2.5 flex-1 overflow-y-auto">
             {filteredProductos.length === 0 ? (
-              <div className="h-48 flex flex-col items-center justify-center text-slate-400 bg-white rounded-lg border border-dashed border-slate-200 p-6 text-center">
-                <Package className="w-8 h-8 mb-2 opacity-30" />
+              <div className="col-span-full py-12 flex flex-col items-center justify-center text-slate-400 text-center bg-white rounded-lg border border-dashed border-slate-200">
+                <Package className="w-10 h-10 opacity-30 mb-2" />
                 <p className="text-xs font-semibold text-slate-600">No se encontraron productos</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Prueba con otra búsqueda o categoría</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2.5">
-                {filteredProductos.map((prod) => {
-                  const isOutOfStock = prod.stock_actual <= 0;
-                  const inCart = cart.find((it) => it.producto.id === prod.id);
+              filteredProductos.map((p) => {
+                const stockActual = Number(p.stock_actual) || 0;
+                const isOutOfStock = stockActual <= 0;
+                const isLowStock = stockActual <= p.stock_minimo && !isOutOfStock;
 
-                  return (
-                    <div
-                      key={prod.id}
-                      className={`p-3 rounded-lg border transition-all flex sm:flex-col justify-between items-center sm:items-stretch gap-2 bg-white ${
-                        isOutOfStock
-                          ? "opacity-40 border-slate-200"
-                          : inCart
-                          ? "border-[#3a4d6b] shadow-2xs ring-1 ring-[#3a4d6b]/20"
-                          : "border-slate-200 hover:border-slate-300 hover:shadow-2xs"
-                      }`}
-                    >
-                      {/* Info Producto */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center space-x-2 text-[10px] text-slate-400 mb-0.5">
-                          <span className="font-mono font-bold text-slate-600">
-                            SKU #{prod.sku}
-                          </span>
-                          <span>•</span>
-                          <span
-                            className={`font-semibold ${
-                              prod.stock_actual <= prod.stock_minimo
-                                ? "text-amber-600"
-                                : "text-slate-500"
-                            }`}
-                          >
-                            {prod.stock_actual} u. disp.
-                          </span>
-                        </div>
-
-                        {/* Nombre Completo Legible */}
-                        <h4 className="font-bold text-slate-900 text-xs sm:text-sm leading-snug break-words">
-                          {prod.nombre}
-                        </h4>
-
-                        <p className="text-sm font-bold text-slate-900 font-mono mt-1">
-                          {formatCLP(prod.precio_venta)}
-                        </p>
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => !isOutOfStock && addToCart(p)}
+                    className={`bg-white border rounded-lg p-3 flex flex-col justify-between transition-all cursor-pointer select-none relative ${
+                      isOutOfStock
+                        ? "border-slate-200 opacity-50 cursor-not-allowed bg-slate-50"
+                        : "border-slate-200 hover:border-[#3a4d6b] hover:shadow-xs active:scale-98"
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1 font-mono">
+                        <span className="font-bold text-slate-600">{p.codigo_barras || p.sku}</span>
+                        <span
+                          className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                            isOutOfStock
+                              ? "bg-rose-50 text-rose-700"
+                              : isLowStock
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          {stockActual} u.
+                        </span>
                       </div>
-
-                      {/* Botón Touch Grande Añadir */}
-                      <div className="flex items-center space-x-1.5 flex-shrink-0">
-                        {inCart ? (
-                          <div className="flex items-center rounded-lg border border-[#3a4d6b] bg-slate-50">
-                            <button
-                              onClick={() => updateQuantity(prod.id, -1)}
-                              className="p-2 text-slate-700 hover:bg-slate-200 active:bg-slate-300 rounded-l-lg"
-                            >
-                              <Minus className="w-3.5 h-3.5" />
-                            </button>
-                            <span className="px-2.5 font-bold text-[#3a4d6b] text-xs font-mono">
-                              {inCart.cantidad}
-                            </span>
-                            <button
-                              onClick={() => addToCart(prod, 1)}
-                              className="p-2 text-slate-700 hover:bg-slate-200 active:bg-slate-300 rounded-r-lg"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            disabled={isOutOfStock}
-                            onClick={() => addToCart(prod, 1)}
-                            className="px-3.5 py-2 rounded-lg bg-[#3a4d6b] hover:bg-slate-700 text-white text-xs font-bold shadow-2xs flex items-center space-x-1 active:scale-95 transition-all disabled:opacity-40"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span className="sm:hidden">Añadir</span>
-                          </button>
-                        )}
-                      </div>
+                      <h4 className="font-bold text-slate-900 text-xs leading-snug break-words">
+                        {p.nombre}
+                      </h4>
                     </div>
-                  );
-                })}
-              </div>
+
+                    <div className="flex items-baseline justify-between mt-3 pt-2 border-t border-slate-100">
+                      <span className="text-xs font-bold font-mono text-slate-900">
+                        {formatCLP(p.precio_venta)}
+                      </span>
+                      <button
+                        disabled={isOutOfStock}
+                        className={`p-1.5 rounded-md transition-colors ${
+                          isOutOfStock
+                            ? "bg-slate-100 text-slate-400"
+                            : "bg-[#3a4d6b] text-white hover:bg-slate-700"
+                        }`}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
 
-        {/* SECCIÓN DESKTOP: Carrito Lateral */}
-        <div className="hidden lg:block w-[340px] flex-shrink-0 bg-white border border-slate-200 rounded-lg shadow-2xs h-fit sticky top-20 overflow-hidden">
+        {/* PANEL DERECHO DESKTOP: Carrito Fijo */}
+        <div className="hidden lg:flex w-80 xl:w-96 bg-white border border-slate-200 rounded-lg shadow-2xs flex-col flex-shrink-0">
           {CartContent}
         </div>
       </div>
 
-      {/* FLOATING BAR MÓVIL: Botón Ver Carrito Flotante */}
+      {/* BARRA FLOTANTE MÓVIL (Bottom Sticky Bar) */}
       {cart.length > 0 && (
-        <div className="lg:hidden fixed bottom-14 left-0 right-0 p-3 z-30 pointer-events-none">
-          <button
-            onClick={() => setIsMobileCartOpen(true)}
-            className="w-full py-3 px-4 rounded-xl bg-[#3a4d6b] text-white font-bold text-xs shadow-xl flex items-center justify-between pointer-events-auto active:scale-98 transition-all animate-slideUp"
-          >
-            <div className="flex items-center space-x-2">
-              <div className="p-1 rounded-full bg-white/20">
-                <ShoppingCart className="w-4 h-4" />
+        <div className="lg:hidden fixed bottom-14 left-0 right-0 p-3 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-xl z-40">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              onClick={() => setIsMobileCartOpen(true)}
+              className="flex items-center space-x-2 text-slate-800"
+            >
+              <div className="relative">
+                <ShoppingCart className="w-5 h-5 text-[#3a4d6b]" />
+                <span className="absolute -top-1.5 -right-1.5 bg-rose-600 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                  {totalItemsCount}
+                </span>
               </div>
-              <span>Ver Carrito ({totalItemsCount} items)</span>
-            </div>
-            <div className="flex items-center space-x-1.5 font-mono text-sm">
-              <span>{formatCLP(total)}</span>
-              <ChevronUp className="w-4 h-4" />
-            </div>
-          </button>
-        </div>
-      )}
+              <div className="text-left">
+                <span className="text-[10px] text-slate-400 block font-semibold">Total a Cobrar</span>
+                <span className="font-bold text-sm font-mono text-slate-900">{formatCLP(total)}</span>
+              </div>
+              <ChevronUp className="w-4 h-4 text-slate-400" />
+            </button>
 
-      {/* DRAWER MÓVIL: Carrito Desplegable en Pantallas Pequeñas */}
-      {isMobileCartOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col justify-end animate-fadeIn">
-          <div className="bg-white rounded-t-2xl max-h-[85vh] overflow-hidden flex flex-col shadow-2xl">
-            <div className="flex items-center justify-between px-4 py-2 bg-slate-100 border-b border-slate-200">
-              <span className="text-xs font-bold text-slate-700">Resumen de Venta</span>
-              <button
-                onClick={() => setIsMobileCartOpen(false)}
-                className="p-1 rounded-full text-slate-500 hover:bg-slate-200"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="overflow-y-auto">{CartContent}</div>
+            <button
+              disabled={isProcessing}
+              onClick={() => setIsMobileCartOpen(true)}
+              className="px-4 py-2 rounded-lg bg-[#3a4d6b] text-white font-bold text-xs shadow-xs"
+            >
+              Ver Boleta
+            </button>
           </div>
         </div>
       )}
 
-      {/* Modales */}
+      {/* DRAWER MÓVIL COMPLETO DE CARRITO */}
+      {isMobileCartOpen && (
+        <div className="lg:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col justify-end animate-fadeIn">
+          <div className="bg-white rounded-t-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between p-3 border-b border-slate-200 bg-slate-50">
+              <span className="font-bold text-xs text-slate-700">Resumen de Venta</span>
+              <button
+                onClick={() => setIsMobileCartOpen(false)}
+                className="p-1 rounded-full text-slate-400 hover:bg-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">{CartContent}</div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DESCUENTO INDIVIDUAL POR PRODUCTO (Pastelería día anterior, etc.) */}
+      {itemDescuentoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs animate-fadeIn">
+          <div className="relative w-full max-w-sm bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
+              <div className="flex items-center space-x-2">
+                <Tag className="w-4 h-4 text-[#3a4d6b]" />
+                <h3 className="font-bold text-xs sm:text-sm text-slate-900">
+                  Descuento por Producto
+                </h3>
+              </div>
+              <button
+                onClick={() => setItemDescuentoModal(null)}
+                className="p-1 rounded-full text-slate-400 hover:bg-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+                <span className="font-bold text-slate-900 block truncate">
+                  {itemDescuentoModal.item.producto.nombre}
+                </span>
+                <span className="text-slate-500">
+                  Precio normal: <b className="font-mono">{formatCLP(itemDescuentoModal.item.precio_unitario)}</b>
+                </span>
+              </div>
+
+              {/* Botones de Descuento Rápido (Pastelería Día Anterior) */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-slate-600 block">
+                  Descuentos Rápidos (Pastelería / Rotación):
+                </label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const desc = Math.round(itemDescuentoModal.item.precio_unitario * 0.3);
+                      applyItemDiscount(
+                        itemDescuentoModal.item.producto.id,
+                        desc,
+                        "Pastel día anterior (-30%)",
+                        30
+                      );
+                    }}
+                    className="p-2 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 text-xs font-bold text-left transition-colors"
+                  >
+                    <span>🍰 Día Anterior -30%</span>
+                    <span className="block text-[10px] text-amber-700 font-mono font-normal">
+                      Queda en: {formatCLP(itemDescuentoModal.item.precio_unitario * 0.7)}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const desc = Math.round(itemDescuentoModal.item.precio_unitario * 0.2);
+                      applyItemDiscount(
+                        itemDescuentoModal.item.producto.id,
+                        desc,
+                        "Pastel día anterior (-20%)",
+                        20
+                      );
+                    }}
+                    className="p-2 rounded-lg bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 text-xs font-bold text-left transition-colors"
+                  >
+                    <span>🍰 Día Anterior -20%</span>
+                    <span className="block text-[10px] text-amber-700 font-mono font-normal">
+                      Queda en: {formatCLP(itemDescuentoModal.item.precio_unitario * 0.8)}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const desc = Math.round(itemDescuentoModal.item.precio_unitario * 0.5);
+                      applyItemDiscount(
+                        itemDescuentoModal.item.producto.id,
+                        desc,
+                        "Liquidación 50%",
+                        50
+                      );
+                    }}
+                    className="p-2 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-900 text-xs font-bold text-left transition-colors"
+                  >
+                    <span>🔥 Liquidación -50%</span>
+                    <span className="block text-[10px] text-rose-700 font-mono font-normal">
+                      Queda en: {formatCLP(itemDescuentoModal.item.precio_unitario * 0.5)}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      applyItemDiscount(itemDescuentoModal.item.producto.id, 0);
+                    }}
+                    className="p-2 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold text-left transition-colors"
+                  >
+                    <span>↺ Sin Descuento</span>
+                    <span className="block text-[10px] text-slate-500 font-mono font-normal">
+                      Precio completo
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Lector de Cámara */}
       <BarcodeScannerModal
         isOpen={isScannerOpen}
         onClose={() => setIsScannerOpen(false)}
         onScan={handleBarcodeScanned}
+        title="Escanear Producto para la Venta"
       />
 
+      {/* Modal Ticket Térmico */}
       <TicketModal
         isOpen={isTicketModalOpen}
         onClose={() => setIsTicketModalOpen(false)}
         venta={completedVenta}
         empresa={empresa}
-        cliente={clientes.find((c) => c.id === completedVenta?.cliente_id)}
-        items={cart.map((c) => ({
-          nombre: c.producto.nombre,
-          cantidad: c.cantidad,
-          precio_unitario: c.precio_unitario,
-          subtotal: c.subtotal,
+        items={completedVenta?.items?.map((it) => ({
+          nombre: it.producto_nombre || "Producto",
+          cantidad: it.cantidad,
+          precio_unitario: it.precio_unitario,
+          descuento_unitario: it.descuento ? Math.round(it.descuento / it.cantidad) : 0,
+          subtotal: it.subtotal,
         }))}
       />
     </div>

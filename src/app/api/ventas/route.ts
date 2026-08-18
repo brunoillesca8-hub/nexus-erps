@@ -88,7 +88,8 @@ export async function POST(req: Request) {
 
       const currentStock = Number(prod.stock_actual);
       const newStock = currentStock - item.cantidad;
-      const itemSubtotal = item.precio_unitario * item.cantidad;
+      const itemDescuentoUnitario = Number(item.descuento) || 0;
+      const itemSubtotal = Math.max(0, (item.precio_unitario - itemDescuentoUnitario) * item.cantidad);
       subtotal += itemSubtotal;
 
       // Descuento atómico de stock en producto
@@ -107,6 +108,8 @@ export async function POST(req: Request) {
         precio_unitario: item.precio_unitario,
         costo_unitario: item.costo_unitario || Number(prod.precio_compra) || 0,
         subtotal: itemSubtotal,
+        descuento: itemDescuentoUnitario * item.cantidad,
+        motivo_descuento: item.motivo_descuento || null,
       });
 
       // Kardex (Movimiento de inventario)
@@ -155,9 +158,19 @@ export async function POST(req: Request) {
     // Inserción de detalles de venta
     for (const d of detallesToInsert) {
       batchStatements.push({
-        sql: `INSERT INTO detalle_ventas (id, venta_id, producto_id, cantidad, precio_unitario, costo_unitario, subtotal)
-              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        args: [d.id, d.venta_id, d.producto_id, d.cantidad, d.precio_unitario, d.costo_unitario, d.subtotal],
+        sql: `INSERT INTO detalle_ventas (id, venta_id, producto_id, cantidad, precio_unitario, costo_unitario, subtotal, descuento, motivo_descuento)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          d.id,
+          d.venta_id,
+          d.producto_id,
+          d.cantidad,
+          d.precio_unitario,
+          d.costo_unitario,
+          d.subtotal,
+          d.descuento || 0,
+          d.motivo_descuento || null,
+        ],
       });
     }
 

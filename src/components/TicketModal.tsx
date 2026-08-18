@@ -15,6 +15,8 @@ interface TicketModalProps {
     nombre: string;
     cantidad: number;
     precio_unitario: number;
+    descuento_unitario?: number;
+    motivo_descuento?: string;
     subtotal: number;
   }[];
 }
@@ -41,16 +43,16 @@ export default function TicketModal({
 ================================
 ${empresa?.nombre || "NEXUS ERP"}
 RUT: ${empresa?.rut_identificador || "76.123.456-7"}
-BOLETA ELECTRÓNICA N° ${venta.numero_folio}
+COMPROBANTE / BOLETA N° ${venta.numero_folio}
 Fecha: ${formatDateTime(venta.fecha_venta)}
 --------------------------------
 ${items
-  .map(
-    (it) =>
-      `${it.cantidad}x ${it.nombre}\n  ${formatCLP(it.precio_unitario)} = ${formatCLP(
-        it.subtotal
-      )}`
-  )
+  .map((it) => {
+    const descText = it.descuento_unitario && it.descuento_unitario > 0
+      ? ` (${it.motivo_descuento || `-$${it.descuento_unitario}`})`
+      : "";
+    return `${it.cantidad}x ${it.nombre}${descText}\n  ${formatCLP(it.precio_unitario - (it.descuento_unitario || 0))} = ${formatCLP(it.subtotal)}`;
+  })
   .join("\n")}
 --------------------------------
 Subtotal: ${formatCLP(venta.subtotal)}
@@ -133,7 +135,7 @@ Pago: ${venta.metodo_pago}
 
             <div className="mb-3 text-[11px] text-gray-700 space-y-0.5">
               <div className="flex justify-between font-bold text-gray-900">
-                <span>BOLETA ELECTRÓNICA:</span>
+                <span>COMPROBANTE / BOLETA:</span>
                 <span>N° {venta.numero_folio}</span>
               </div>
               <div className="flex justify-between">
@@ -148,19 +150,26 @@ Pago: ${venta.metodo_pago}
               </div>
             </div>
 
-            <div className="border-t border-b border-dashed border-gray-400 py-2 my-2 space-y-1">
+            <div className="border-t border-b border-dashed border-gray-400 py-2 my-2 space-y-1.5">
               <div className="flex justify-between font-bold text-[11px] text-gray-800">
                 <span>CANT / ARTÍCULO</span>
                 <span>TOTAL</span>
               </div>
               {items.map((it, idx) => (
-                <div key={idx} className="flex justify-between items-start text-[11px]">
-                  <div className="pr-2 leading-tight">
-                    <span className="font-semibold">{it.cantidad}x</span> {it.nombre}
+                <div key={idx} className="space-y-0.5 text-[11px]">
+                  <div className="flex justify-between items-start">
+                    <div className="pr-2 leading-tight">
+                      <span className="font-semibold">{it.cantidad}x</span> {it.nombre}
+                    </div>
+                    <span className="font-semibold whitespace-nowrap">
+                      {formatCLP(it.subtotal)}
+                    </span>
                   </div>
-                  <span className="font-semibold whitespace-nowrap">
-                    {formatCLP(it.subtotal)}
-                  </span>
+                  {it.descuento_unitario && it.descuento_unitario > 0 ? (
+                    <div className="text-[10px] text-emerald-700 pl-4 font-sans font-semibold">
+                      {it.motivo_descuento || `Desc: -${formatCLP(it.descuento_unitario)} c/u`}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -185,7 +194,7 @@ Pago: ${venta.metodo_pago}
             </div>
 
             <div className="text-center pt-3 mt-3 border-t border-dashed border-gray-400 text-[10px] text-gray-500">
-              <p className="font-bold uppercase">¡Gracias por su preferencia!</p>
+              <p className="font-bold uppercase">¡Gracias por su compra!</p>
             </div>
           </div>
         </div>

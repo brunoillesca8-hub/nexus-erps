@@ -145,7 +145,9 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
       cantidad INTEGER NOT NULL,
       precio_unitario REAL NOT NULL,
       costo_unitario REAL NOT NULL,
-      subtotal REAL NOT NULL
+      subtotal REAL NOT NULL,
+      descuento REAL DEFAULT 0,
+      motivo_descuento TEXT
     );`,
 
     `CREATE INDEX IF NOT EXISTS idx_detalle_venta ON detalle_ventas(venta_id);`,
@@ -199,6 +201,18 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
 
     try {
       await db.execute("ALTER TABLE productos ADD COLUMN fecha_vencimiento TEXT");
+    } catch {
+      // Columna ya existe
+    }
+
+    try {
+      await db.execute("ALTER TABLE detalle_ventas ADD COLUMN descuento REAL DEFAULT 0");
+    } catch {
+      // Columna ya existe
+    }
+
+    try {
+      await db.execute("ALTER TABLE detalle_ventas ADD COLUMN motivo_descuento TEXT");
     } catch {
       // Columna ya existe
     }

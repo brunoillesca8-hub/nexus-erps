@@ -19,12 +19,14 @@ import {
   Clock,
   Zap,
   Boxes,
+  FileText,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { useErp } from "@/context/erp-context";
 import { formatCLP, matchesSearch } from "@/lib/utils";
 import ModalProducto from "@/components/ModalProducto";
 import ModalReponerStock from "@/components/ModalReponerStock";
+import ModalImportarFactura from "@/components/ModalImportarFactura";
 import BarcodeScannerModal from "@/components/BarcodeScannerModal";
 import { useBarcodeListener } from "@/hooks/useBarcodeListener";
 import type { Producto } from "@/types/erp";
@@ -51,6 +53,7 @@ export default function ProductosPage() {
   // Estados de Modales
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [productoEditar, setProductoEditar] = useState<Producto | null>(null);
+  const [isFacturaModalOpen, setIsFacturaModalOpen] = useState(false);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [productoReponer, setProductoReponer] = useState<Producto | null>(null);
@@ -296,6 +299,16 @@ export default function ProductosPage() {
         </div>
 
         <div className="flex items-center space-x-2">
+          {/* Botón Cargar Factura XML / Excel */}
+          <button
+            onClick={() => setIsFacturaModalOpen(true)}
+            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold border border-emerald-300 shadow-2xs transition-colors"
+            title="Importar Factura Electrónica del SII (XML) o Excel de despacho"
+          >
+            <FileText className="w-3.5 h-3.5 text-emerald-700" />
+            <span>Cargar Factura</span>
+          </button>
+
           {/* Botón Escanear para Reponer */}
           <button
             onClick={() => setIsScannerOpen(true)}
@@ -853,6 +866,12 @@ export default function ProductosPage() {
         onClose={() => setIsAddModalOpen(false)}
         productoEditar={productoEditar}
         initialBarcode={scannedNotFoundCode}
+      />
+
+      {/* Modal Importar Factura Proveedor XML/Excel */}
+      <ModalImportarFactura
+        isOpen={isFacturaModalOpen}
+        onClose={() => setIsFacturaModalOpen(false)}
       />
 
       {/* Modal Escáner de Cámara */}
