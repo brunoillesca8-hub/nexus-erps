@@ -117,12 +117,41 @@ export interface Lote {
   precio_final?: number;
 }
 
+export interface ConfiguracionDTE {
+  id: string;
+  empresa_id: string;
+  rut_emisor: string;
+  razon_social: string;
+  giro?: string | null;
+  acteco: number;
+  direccion_origen?: string | null;
+  comuna_origen?: string | null;
+  ciudad_origen?: string | null;
+  ambiente: 'CERTIFICACION' | 'PRODUCCION';
+  libredte_url?: string | null;
+  libredte_token?: string | null;
+  certificado_nombre?: string | null;
+  certificado_password?: string | null;
+  certificado_base64?: string | null;
+  caf_boleta_39_xml?: string | null;
+  caf_factura_33_xml?: string | null;
+  folio_actual_boleta: number;
+  folio_actual_factura: number;
+  emision_automatica: number;
+  updated_at?: string;
+}
+
 export interface Venta {
   id: string;
   empresa_id: string;
   sucursal_id: string;
   cliente_id?: string | null;
   numero_folio: number;
+  tipo_dte?: number; // 39 = Boleta Electrónica, 33 = Factura
+  folio_dte?: number | null;
+  ted_xml?: string | null; // Timbre Electrónico DTE
+  estado_sii?: 'NO_ENVIADO' | 'PENDIENTE' | 'ACEPTADO' | 'RECHAZADO';
+  track_id_sii?: string | null;
   subtotal: number;
   descuento: number;
   impuesto: number;

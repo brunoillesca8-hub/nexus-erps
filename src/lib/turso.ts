@@ -206,7 +206,39 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
        ('cat_mascotas', 'emp_default', 'Mascotas', 'Alimentos para perros, gatos y accesorios');`,
 
     `INSERT OR IGNORE INTO clientes (id, empresa_id, nombre, rut_identificador, telefono, email, direccion)
-     VALUES ('cli_default', 'emp_default', 'Cliente General / Consumidor Final', '66.666.666-6', '+56 9 0000 0000', 'general@caja.cl', 'Venta en Mesón');`
+     VALUES ('cli_default', 'emp_default', 'Cliente General / Consumidor Final', '66.666.666-6', '+56 9 0000 0000', 'general@caja.cl', 'Venta en Mesón');`,
+
+    `CREATE TABLE IF NOT EXISTS configuracion_dte (
+      id TEXT PRIMARY KEY,
+      empresa_id TEXT NOT NULL REFERENCES empresas(id) ON DELETE CASCADE,
+      rut_emisor TEXT NOT NULL,
+      razon_social TEXT NOT NULL,
+      giro TEXT,
+      acteco INTEGER DEFAULT 154120,
+      direccion_origen TEXT,
+      comuna_origen TEXT,
+      ciudad_origen TEXT,
+      ambiente TEXT CHECK(ambiente IN ('CERTIFICACION', 'PRODUCCION')) DEFAULT 'CERTIFICACION',
+      libredte_url TEXT DEFAULT 'https://libredte.cl',
+      libredte_token TEXT,
+      certificado_nombre TEXT,
+      certificado_password TEXT,
+      certificado_base64 TEXT,
+      caf_boleta_39_xml TEXT,
+      caf_factura_33_xml TEXT,
+      folio_actual_boleta INTEGER DEFAULT 1,
+      folio_actual_factura INTEGER DEFAULT 1,
+      emision_automatica INTEGER DEFAULT 0,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );`,
+
+    `INSERT OR IGNORE INTO configuracion_dte (
+      id, empresa_id, rut_emisor, razon_social, giro, acteco, direccion_origen, comuna_origen, ciudad_origen, ambiente, emision_automatica
+     ) VALUES (
+      'dte_default', 'emp_default', '76.123.456-7', 'Panadería y Pastelería Artesanal SpA', 
+      'Elaboración y venta de productos de panadería, pastelería y rotisería', 154120, 
+      'Calle Comercial 123', 'Valdivia', 'Valdivia', 'CERTIFICACION', 0
+     );`
   ];
 
   try {
@@ -259,6 +291,36 @@ export async function initDatabase(): Promise<{ success: boolean; message: strin
 
     try {
       await db.execute("ALTER TABLE productos ADD COLUMN stock_sobrante INTEGER DEFAULT 0");
+    } catch {
+      // Columna ya existe
+    }
+
+    try {
+      await db.execute("ALTER TABLE ventas ADD COLUMN tipo_dte INTEGER DEFAULT 39");
+    } catch {
+      // Columna ya existe
+    }
+
+    try {
+      await db.execute("ALTER TABLE ventas ADD COLUMN folio_dte INTEGER");
+    } catch {
+      // Columna ya existe
+    }
+
+    try {
+      await db.execute("ALTER TABLE ventas ADD COLUMN ted_xml TEXT");
+    } catch {
+      // Columna ya existe
+    }
+
+    try {
+      await db.execute("ALTER TABLE ventas ADD COLUMN estado_sii TEXT DEFAULT 'NO_ENVIADO'");
+    } catch {
+      // Columna ya existe
+    }
+
+    try {
+      await db.execute("ALTER TABLE ventas ADD COLUMN track_id_sii TEXT");
     } catch {
       // Columna ya existe
     }

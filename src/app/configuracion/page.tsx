@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import {
@@ -13,10 +13,16 @@ import {
   RefreshCw,
   Download,
   KeyRound,
+  FileText,
+  Building2,
+  ShieldCheck,
+  Send,
+  Sparkles,
+  Lock,
 } from "lucide-react";
 import { useErp } from "@/context/erp-context";
 import { formatCLP } from "@/lib/utils";
-import type { Producto } from "@/types/erp";
+import type { Producto, ConfiguracionDTE } from "@/types/erp";
 
 export default function ConfiguracionPage() {
   const {
@@ -30,6 +36,8 @@ export default function ConfiguracionPage() {
     user,
     cambiarPassword,
   } = useErp();
+
+  const [activeTab, setActiveTab] = useState<"CATALOGO" | "DTE_SII" | "SEGURIDAD">("DTE_SII");
 
   const [isImporting, setIsImporting] = useState(false);
   const [importSuccessMessage, setImportSuccessMessage] = useState<string | null>(null);
@@ -48,6 +56,105 @@ export default function ConfiguracionPage() {
     type: "success" | "error";
     message: string;
   } | null>(null);
+
+  // Estados de Facturación Electrónica DTE / SII & LibreDTE
+  const [dteConfig, setDteConfig] = useState<ConfiguracionDTE>({
+    id: "dte_default",
+    empresa_id: "emp_default",
+    rut_emisor: "76.123.456-7",
+    razon_social: "Panadería y Pastelería Artesanal SpA",
+    giro: "Elaboración y venta de productos de panadería y pastelería",
+    acteco: 154120,
+    direccion_origen: "Calle Comercial 123",
+    comuna_origen: "Valdivia",
+    ciudad_origen: "Valdivia",
+    ambiente: "CERTIFICACION",
+    libredte_url: "https://libredte.cl",
+    libredte_token: "",
+    certificado_nombre: "",
+    certificado_password: "",
+    certificado_base64: "",
+    caf_boleta_39_xml: "",
+    caf_factura_33_xml: "",
+    folio_actual_boleta: 1,
+    folio_actual_factura: 1,
+    emision_automatica: 0,
+  });
+
+  const [isSavingDte, setIsSavingDte] = useState(false);
+  const [dteSuccessMsg, setDteSuccessMsg] = useState<string | null>(null);
+  const [dteErrorMsg, setDteErrorMsg] = useState<string | null>(null);
+  const [isTestingDte, setIsTestingDte] = useState(false);
+
+  // Cargar configuración DTE al montar
+  useEffect(() => {
+    fetch("/api/dte/config")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.config) {
+          setDteConfig(data.config);
+        }
+      })
+      .catch((err) => console.error("Error al cargar config DTE:", err));
+  }, []);
+
+  const handleSaveDteConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingDte(true);
+    setDteSuccessMsg(null);
+    setDteErrorMsg(null);
+
+    try {
+      const res = await fetch("/api/dte/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(dteConfig),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setDteSuccessMsg("✅ Configuración de Facturación SII / LibreDTE guardada exitosamente.");
+        setTimeout(() => setDteSuccessMsg(null), 4000);
+      } else {
+        setDteErrorMsg(data.error || "Error al guardar configuración DTE.");
+      }
+    } catch (err: any) {
+      setDteErrorMsg(err.message || "Error de red al guardar DTE.");
+    } finally {
+      setIsSavingDte(false);
+    }
+  };
+
+  const handleCertFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = (ev.target?.result as string).split(",")[1];
+      setDteConfig((prev) => ({
+        ...prev,
+        certificado_nombre: file.name,
+        certificado_base64: base64,
+      }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleCafFileChange = (e: React.ChangeEvent<HTMLInputElement>, tipo: "boleta" | "factura") => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target?.result as string;
+      setDteConfig((prev) => ({
+        ...prev,
+        [tipo === "boleta" ? "caf_boleta_39_xml" : "caf_factura_33_xml"]: content,
+      }));
+    };
+    reader.readAsText(file);
+  };
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,7 +184,8 @@ export default function ConfiguracionPage() {
       });
     }
   };
-  // Corrección de caracteres con codificación rota (Mojibake UTF-8)
+
+  // Corrección de caracteres con codificación rota
   const fixEncoding = (str: string): string => {
     if (!str) return "";
     return str
@@ -96,7 +204,6 @@ export default function ConfiguracionPage() {
       .replace(/Â/g, "");
   };
 
-  // Extracción flexible de campos independiente de mayúsculas/minúsculas y acentos
   const getRowField = (row: any, ...fieldAliases: string[]): any => {
     for (const alias of fieldAliases) {
       const cleanAlias = alias.toLowerCase().replace(/[\s_\-\.\(\)]/g, "");
@@ -110,7 +217,6 @@ export default function ConfiguracionPage() {
     return undefined;
   };
 
-  // Conversión numérica segura tolerante a formatos con puntos, comas y símbolos
   const parseNumber = (val: any, defaultVal = 0): number => {
     if (val === undefined || val === null || val === "") return defaultVal;
     if (typeof val === "number") return isNaN(val) ? defaultVal : val;
@@ -122,122 +228,149 @@ export default function ConfiguracionPage() {
     return isNaN(parsed) ? defaultVal : parsed;
   };
 
-  // Extracción de SKU entero (ej: "SKU-0001" -> 1001 o 1)
-  const parseSku = (val: any, autoIndex: number): number => {
-    if (val === undefined || val === null || val === "") return autoIndex;
-    if (typeof val === "number") return val > 0 ? val : autoIndex;
-    const digits = String(val).replace(/\D/g, "");
-    const parsed = parseInt(digits, 10);
-    return isNaN(parsed) || parsed === 0 ? autoIndex : parsed;
+  const cleanBarcode = (val: any): string | null => {
+    if (!val) return null;
+    const s = String(val).trim();
+    if (s.toLowerCase().includes("e+")) {
+      const num = Number(s);
+      return isNaN(num) ? s : num.toLocaleString("fullwide", { useGrouping: false });
+    }
+    return s;
   };
 
-  // Procesar archivo CSV o Excel
+  const normalizeParsedRows = (rawRows: any[]): Partial<Producto>[] => {
+    const existingSkus = new Set(productos.map((p) => Number(p.sku)));
+    let nextAvailableSku =
+      productos.length > 0 ? Math.max(...productos.map((p) => Number(p.sku) || 1000)) + 1 : 1001;
+
+    return rawRows
+      .filter((row) => {
+        const nombre = getRowField(row, "nombre", "producto", "descripcion", "name", "item");
+        return nombre && String(nombre).trim().length > 0;
+      })
+      .map((row) => {
+        const rawNombre = String(
+          getRowField(row, "nombre", "producto", "descripcion", "name", "item")
+        ).trim();
+        const nombre = fixEncoding(rawNombre);
+
+        const rawCat = String(
+          getRowField(row, "categoria", "categoria_nombre", "rubro", "category", "depto") ||
+            "Abarrotes Generales"
+        ).trim();
+        const catNombre = fixEncoding(rawCat);
+
+        let catId = "cat_abarrotes";
+        const foundCat = categorias.find(
+          (c) => c.nombre.toLowerCase().trim() === catNombre.toLowerCase()
+        );
+        if (foundCat) catId = foundCat.id;
+
+        let skuVal = Number(getRowField(row, "sku", "codigo_interno", "id_producto", "codigo"));
+        if (!skuVal || isNaN(skuVal) || existingSkus.has(skuVal)) {
+          skuVal = nextAvailableSku++;
+        }
+        existingSkus.add(skuVal);
+
+        const rawBarcode = getRowField(
+          row,
+          "codigo_barras",
+          "codigobarras",
+          "barcode",
+          "ean",
+          "upc",
+          "ean13"
+        );
+        const codigo_barras = cleanBarcode(rawBarcode);
+
+        const precio_compra = parseNumber(
+          getRowField(row, "precio_compra", "costo", "costo_neto", "cost", "compra"),
+          0
+        );
+        let precio_venta = parseNumber(
+          getRowField(row, "precio_venta", "precio", "pvp", "precio_publico", "venta"),
+          0
+        );
+
+        if (precio_venta <= 0 && precio_compra > 0) {
+          precio_venta = Math.round(precio_compra * 1.35);
+        }
+
+        const stock_actual = parseNumber(
+          getRowField(row, "stock_actual", "stock", "cantidad", "inventario", "qty"),
+          10
+        );
+        const stock_minimo = parseNumber(
+          getRowField(row, "stock_minimo", "minimo", "stock_min", "min_stock"),
+          5
+        );
+
+        return {
+          nombre,
+          sku: skuVal,
+          codigo_barras,
+          categoria_id: catId,
+          precio_compra,
+          precio_venta,
+          stock_actual,
+          stock_minimo,
+          unidad_medida: "unidad",
+        };
+      });
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setImportError(null);
     setImportSuccessMessage(null);
+    setParsedPreview([]);
+
     const fileName = file.name.toLowerCase();
 
-    if (fileName.endsWith(".csv") || fileName.endsWith(".txt")) {
+    if (fileName.endsWith(".csv")) {
       Papa.parse(file, {
         header: true,
+        skipEmptyLines: true,
         dynamicTyping: false,
-        skipEmptyLines: "greedy",
-        delimitersToGuess: [";", ",", "\t", "|"],
+        encoding: "UTF-8",
         complete: (results) => {
           if (results.data && results.data.length > 0) {
-            processRawData(results.data);
+            const normalized = normalizeParsedRows(results.data);
+            setParsedPreview(normalized);
           } else {
-            setImportError("El archivo CSV no contiene registros o está vacío.");
+            setImportError("El archivo CSV no contiene registros válidos.");
           }
-        },
-        error: (err) => {
-          setImportError(`Error al leer archivo CSV: ${err.message}`);
         },
       });
     } else if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) {
       const reader = new FileReader();
-      reader.onload = (evt) => {
+      reader.onload = (ev) => {
         try {
-          const data = evt.target?.result;
-          const workbook = XLSX.read(data, { type: "binary" });
-          const sheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[sheetName];
-          const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-          processRawData(json);
-        } catch (err: any) {
-          setImportError(`Error al procesar archivo Excel: ${err.message}`);
+          const data = new Uint8Array(ev.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: "array" });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const json = XLSX.utils.sheet_to_json(worksheet, { raw: false, defval: "" });
+
+          if (json && json.length > 0) {
+            const normalized = normalizeParsedRows(json);
+            setParsedPreview(normalized);
+          } else {
+            setImportError("La hoja de cálculo Excel no contiene filas de datos.");
+          }
+        } catch {
+          setImportError("Error al procesar el archivo Excel. Asegúrate de que no esté corrupto.");
         }
       };
-      reader.readAsBinaryString(file);
-    } else {
-      setImportError("Formato de archivo no soportado. Sube un archivo .csv o .xlsx");
+      reader.readAsArrayBuffer(file);
     }
   };
 
-  const processRawData = (rows: any[]) => {
-    let currentAutoSku = 1001;
-
-    const items: Partial<Producto>[] = rows
-      .map((row) => {
-        const rawNombre = getRowField(row, "nombre", "producto", "descripcion", "item", "articulo");
-        if (!rawNombre || !String(rawNombre).trim()) return null;
-
-        const nombre = fixEncoding(String(rawNombre).trim());
-        const rawSku = getRowField(row, "sku", "codigo", "skucode", "skuinter", "id");
-        const sku = parseSku(rawSku, currentAutoSku++);
-
-        const rawBarcode = getRowField(row, "codigo_barras", "codigobarras", "barcode", "ean", "ean13", "upc");
-        const codigo_barras = rawBarcode ? String(rawBarcode).trim() : undefined;
-
-        const rawPrecioCompra = getRowField(row, "precio_compra", "preciocompra", "costo", "pcompra", "pcompraunitneto", "costounitario", "compra");
-        const precio_compra = parseNumber(rawPrecioCompra, 0);
-
-        const rawPrecioVenta = getRowField(row, "precio_venta", "precioventa", "precio", "pventa", "pventaunitinciva", "preciounitario", "venta");
-        const precio_venta = parseNumber(rawPrecioVenta, 0);
-
-        const rawStock = getRowField(row, "stock", "stock_actual", "stockactual", "cantidad", "unidades");
-        const stock_actual = parseNumber(rawStock, 0);
-
-        const rawStockMin = getRowField(row, "stock_minimo", "stockminimo", "minimo", "stockmin");
-        const stock_minimo = parseNumber(rawStockMin, 5);
-
-        const rawCat = getRowField(row, "categoria", "departamento", "depto", "rubro", "category");
-        const categoriaNombre = rawCat ? fixEncoding(String(rawCat).trim()) : "";
-
-        // Buscar coincidencia en categorías existentes
-        const catFound = categorias.find(
-          (c) =>
-            c.nombre.toLowerCase().includes(categoriaNombre.toLowerCase()) ||
-            categoriaNombre.toLowerCase().includes(c.nombre.toLowerCase())
-        );
-
-        return {
-          nombre,
-          sku,
-          codigo_barras,
-          precio_compra,
-          precio_venta,
-          stock_actual,
-          stock_minimo,
-          categoria_id: catFound?.id || categorias[0]?.id || undefined,
-          unidad_medida: "unidad",
-        };
-      })
-      .filter(Boolean) as Partial<Producto>[];
-
-    if (items.length === 0) {
-      setImportError("No se pudieron extraer columnas válidas. Asegúrate de incluir columnas como Nombre, Precio_Compra, Precio_Venta, Stock.");
-      setParsedPreview([]);
-    } else {
-      setParsedPreview(items);
-    }
-  };;
-
   const handleExecuteImport = async () => {
     if (parsedPreview.length === 0) return;
+
     setIsImporting(true);
     setImportError(null);
 
@@ -245,107 +378,35 @@ export default function ConfiguracionPage() {
     setIsImporting(false);
 
     if (res.success) {
-      setImportSuccessMessage(
-        `¡Éxito! Se importaron ${res.count || parsedPreview.length} productos a Turso Database.`
-      );
+      setImportSuccessMessage(`¡Éxito! Se importaron ${res.count || parsedPreview.length} productos.`);
       setParsedPreview([]);
+      recargarDatos();
     } else {
-      setImportError(res.error || "Error al procesar la importación masiva.");
+      setImportError(res.error || "Ocurrió un error al guardar los productos en la base de datos.");
     }
   };
 
   const downloadTemplate = () => {
     const templateData = [
       {
-        nombre: "Arroz Grano Largo 1kg",
-        sku: 1001,
-        codigo_barras: "7801234567891",
-        categoria: "Abarrotes Generales",
-        precio_compra: 950,
-        precio_venta: 1490,
-        stock_actual: 48,
-        stock_minimo: 10,
-      },
-      {
-        nombre: "Bebida Cola 1.5L",
-        sku: 1002,
-        codigo_barras: "7801234567892",
-        categoria: "Bebidas y Líquidos",
-        precio_compra: 1100,
-        precio_venta: 1850,
-        stock_actual: 36,
-        stock_minimo: 12,
+        nombre: "Ejemplo: Pan Amasado Artesanal",
+        sku: "1001",
+        codigo_barras: "7801234567890",
+        categoria: "Pastelería & Elaboración Propia",
+        precio_compra: "600",
+        precio_venta: "1200",
+        stock_actual: "50",
+        stock_minimo: "10",
       },
     ];
 
-    const worksheet = XLSX.utils.json_to_sheet(templateData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Plantilla_Productos");
-    XLSX.writeFile(workbook, "plantilla_importacion_productos.xlsx");
-  };
-
-  const loadDemoCatalog = async () => {
-    const demoItems: Partial<Producto>[] = [
-      {
-        nombre: "Panta de ralbs",
-        sku: 1001,
-        codigo_barras: "70000000001",
-        categoria_id: categorias[0]?.id,
-        precio_compra: 1350,
-        precio_venta: 2350,
-        stock_actual: 45,
-        stock_minimo: 5,
-      },
-      {
-        nombre: "Canta de bando numario",
-        sku: 1002,
-        codigo_barras: "76.123.456-7",
-        categoria_id: categorias[0]?.id,
-        precio_compra: 1250,
-        precio_venta: 3500,
-        stock_actual: 30,
-        stock_minimo: 5,
-      },
-      {
-        nombre: "Canta de parallejo material",
-        sku: 1003,
-        codigo_barras: "76.123.456-7",
-        categoria_id: categorias[0]?.id,
-        precio_compra: 1100,
-        precio_venta: 2500,
-        stock_actual: 25,
-        stock_minimo: 5,
-      },
-      {
-        nombre: "Hanta de ralbs",
-        sku: 1004,
-        codigo_barras: "70000000001",
-        categoria_id: categorias[0]?.id,
-        precio_compra: 950,
-        precio_venta: 1250,
-        stock_actual: 25,
-        stock_minimo: 5,
-      },
-      {
-        nombre: "Hanta de paraleno material",
-        sku: 1005,
-        codigo_barras: "76.123.456-7",
-        categoria_id: categorias[0]?.id,
-        precio_compra: 750,
-        precio_venta: 1250,
-        stock_actual: 20,
-        stock_minimo: 5,
-      },
-    ];
-
-    setIsImporting(true);
-    await agregarProductosLote(demoItems);
-    setIsImporting(false);
-    setImportSuccessMessage("¡Catálogo demo cargado con éxito!");
+    const ws = XLSX.utils.json_to_sheet(templateData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Productos");
+    XLSX.writeFile(wb, "plantilla_carga_nexus_erp.xlsx");
   };
 
   const handlePurgeCatalog = async () => {
-    if (purgeConfirmText !== "CONFIRMAR") return;
     setIsPurging(true);
     await vaciarCatalogo();
     setIsPurging(false);
@@ -358,253 +419,551 @@ export default function ConfiguracionPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
-          Configuración & Migración
+          Configuración del Sistema
         </h1>
         <p className="text-xs sm:text-sm text-slate-500 mt-1">
-          Importación masiva CSV/Excel, diagnóstico de Turso Database y mantenimiento.
+          Facturación Electrónica SII, importación masiva de catálogo y seguridad.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* PANEL IZQUIERDO: IMPORTADOR */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-xs space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center space-x-2">
-                <UploadCloud className="w-5 h-5 text-[#3a4d6b]" />
-                <h2 className="font-bold text-sm text-slate-900">Importador Masivo de Catálogo</h2>
+      {/* Tabs de Navegación */}
+      <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
+        <button
+          onClick={() => setActiveTab("DTE_SII")}
+          className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center space-x-2 transition-all ${
+            activeTab === "DTE_SII"
+              ? "bg-[#3a4d6b] text-white shadow-xs"
+              : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          <span>🇨🇱 Facturación SII & LibreDTE</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab("CATALOGO")}
+          className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center space-x-2 transition-all ${
+            activeTab === "CATALOGO"
+              ? "bg-[#3a4d6b] text-white shadow-xs"
+              : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+          }`}
+        >
+          <UploadCloud className="w-4 h-4" />
+          <span>Importador & Catálogo</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab("SEGURIDAD")}
+          className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center space-x-2 transition-all ${
+            activeTab === "SEGURIDAD"
+              ? "bg-[#3a4d6b] text-white shadow-xs"
+              : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+          }`}
+        >
+          <KeyRound className="w-4 h-4" />
+          <span>Seguridad & Clave</span>
+        </button>
+      </div>
+
+      {/* TAB 1: FACTURACIÓN ELECTRÓNICA SII & LIBREDTE */}
+      {activeTab === "DTE_SII" && (
+        <form onSubmit={handleSaveDteConfig} className="space-y-6 animate-fadeIn">
+          {dteSuccessMsg && (
+            <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-bold flex items-center space-x-2 shadow-2xs">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+              <span>{dteSuccessMsg}</span>
+            </div>
+          )}
+
+          {dteErrorMsg && (
+            <div className="p-3 rounded-lg bg-rose-50 border border-rose-300 text-rose-900 text-xs font-bold flex items-center space-x-2 shadow-2xs">
+              <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+              <span>{dteErrorMsg}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Panel 1: Datos Tributarios Emisor */}
+            <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center space-x-2">
+                  <Building2 className="w-5 h-5 text-[#3a4d6b]" />
+                  <h3 className="font-bold text-sm text-slate-900">
+                    Datos del Contribuyente Emisor (SII)
+                  </h3>
+                </div>
+                <span className="px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-800 text-[11px] font-bold">
+                  Documentos Tipo 39 (Boletas) y 33 (Facturas)
+                </span>
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">RUT Emisor *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="76.123.456-7"
+                    value={dteConfig.rut_emisor || ""}
+                    onChange={(e) => setDteConfig({ ...dteConfig, rut_emisor: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-300 text-slate-900 font-mono font-bold rounded-lg px-3 py-2 focus:bg-white focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Razón Social *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Panadería y Pastelería Artesanal SpA"
+                    value={dteConfig.razon_social || ""}
+                    onChange={(e) => setDteConfig({ ...dteConfig, razon_social: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-300 text-slate-900 font-medium rounded-lg px-3 py-2 focus:bg-white focus:outline-none"
+                  />
+                </div>
+
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="font-bold text-slate-700">Giro Comercial del SII</label>
+                  <input
+                    type="text"
+                    placeholder="Elaboración y venta de productos de panadería, pastelería y rotisería"
+                    value={dteConfig.giro || ""}
+                    onChange={(e) => setDteConfig({ ...dteConfig, giro: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-2 focus:bg-white focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Código Actividad Económica (ACTECO)</label>
+                  <input
+                    type="number"
+                    placeholder="154120"
+                    value={dteConfig.acteco || 154120}
+                    onChange={(e) => setDteConfig({ ...dteConfig, acteco: Number(e.target.value) })}
+                    className="w-full bg-slate-50 border border-slate-300 text-slate-900 font-mono rounded-lg px-3 py-2 focus:bg-white focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Dirección Casa Matriz / Local</label>
+                  <input
+                    type="text"
+                    placeholder="Calle Comercial 123"
+                    value={dteConfig.direccion_origen || ""}
+                    onChange={(e) => setDteConfig({ ...dteConfig, direccion_origen: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-2 focus:bg-white focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Comuna</label>
+                  <input
+                    type="text"
+                    placeholder="Valdivia"
+                    value={dteConfig.comuna_origen || ""}
+                    onChange={(e) => setDteConfig({ ...dteConfig, comuna_origen: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-2 focus:bg-white focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Ciudad</label>
+                  <input
+                    type="text"
+                    placeholder="Valdivia"
+                    value={dteConfig.ciudad_origen || ""}
+                    onChange={(e) => setDteConfig({ ...dteConfig, ciudad_origen: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-2 focus:bg-white focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Conexión LibreDTE */}
+              <div className="pt-4 border-t border-slate-200 space-y-3">
+                <div className="flex items-center space-x-2">
+                  <Sparkles className="w-4 h-4 text-amber-600" />
+                  <h4 className="font-bold text-xs text-slate-900">
+                    Servicio Open Source LibreDTE (Costo $0 CLP)
+                  </h4>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="space-y-1">
+                    <label className="font-bold text-slate-700">URL del Servicio LibreDTE</label>
+                    <input
+                      type="text"
+                      placeholder="https://libredte.cl"
+                      value={dteConfig.libredte_url || "https://libredte.cl"}
+                      onChange={(e) => setDteConfig({ ...dteConfig, libredte_url: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-1.5 focus:bg-white focus:outline-none font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-bold text-slate-700">Token de Autenticación LibreDTE</label>
+                    <input
+                      type="password"
+                      placeholder="Ingresa tu token de LibreDTE..."
+                      value={dteConfig.libredte_token || ""}
+                      onChange={(e) => setDteConfig({ ...dteConfig, libredte_token: e.target.value })}
+                      className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-1.5 focus:bg-white focus:outline-none font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Panel 2: Certificado Digital, CAF y Ambiente */}
+            <div className="space-y-6">
+              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
+                <div className="flex items-center space-x-2 pb-2 border-b border-slate-100">
+                  <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                  <h3 className="font-bold text-sm text-slate-900">Firma & Folios SII</h3>
+                </div>
+
+                {/* Ambiente */}
+                <div className="space-y-1.5 text-xs">
+                  <label className="font-bold text-slate-700 block">Ambiente SII:</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDteConfig({ ...dteConfig, ambiente: "CERTIFICACION" })}
+                      className={`p-2 rounded-lg text-xs font-bold border transition-all ${
+                        dteConfig.ambiente === "CERTIFICACION"
+                          ? "bg-amber-100 text-amber-950 border-amber-400 shadow-xs"
+                          : "bg-white text-slate-600 border-slate-300"
+                      }`}
+                    >
+                      🧪 Certificación / Test
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDteConfig({ ...dteConfig, ambiente: "PRODUCCION" })}
+                      className={`p-2 rounded-lg text-xs font-bold border transition-all ${
+                        dteConfig.ambiente === "PRODUCCION"
+                          ? "bg-emerald-100 text-emerald-950 border-emerald-400 shadow-xs"
+                          : "bg-white text-slate-600 border-slate-300"
+                      }`}
+                    >
+                      🚀 Producción Real
+                    </button>
+                  </div>
+                </div>
+
+                {/* Certificado Digital */}
+                <div className="space-y-2 text-xs pt-2 border-t border-slate-100">
+                  <label className="font-bold text-slate-700 block">
+                    Firma Electrónica (.p12 / .pfx):
+                  </label>
+                  <input
+                    type="file"
+                    accept=".p12, .pfx"
+                    onChange={handleCertFileChange}
+                    className="w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-[#3a4d6b] file:text-white"
+                  />
+                  {dteConfig.certificado_nombre && (
+                    <p className="text-[11px] text-emerald-700 font-bold">
+                      Archivo cargado: {dteConfig.certificado_nombre}
+                    </p>
+                  )}
+
+                  <div className="space-y-1 pt-1">
+                    <label className="font-bold text-slate-700 block">Clave del Certificado:</label>
+                    <input
+                      type="password"
+                      placeholder="••••••••"
+                      value={dteConfig.certificado_password || ""}
+                      onChange={(e) =>
+                        setDteConfig({ ...dteConfig, certificado_password: e.target.value })
+                      }
+                      className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-2.5 py-1.5 focus:bg-white focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Carga de CAF */}
+                <div className="space-y-2 text-xs pt-2 border-t border-slate-100">
+                  <label className="font-bold text-slate-700 block">
+                    Archivo CAF Boletas (.xml descargado del SII):
+                  </label>
+                  <input
+                    type="file"
+                    accept=".xml"
+                    onChange={(e) => handleCafFileChange(e, "boleta")}
+                    className="w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-slate-700 file:text-white"
+                  />
+                  {dteConfig.caf_boleta_39_xml && (
+                    <p className="text-[11px] text-emerald-700 font-bold">
+                      CAF Boleta N° 39 Cargado ✅
+                    </p>
+                  )}
+                </div>
+
+                {/* Control de Folios */}
+                <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-100">
+                  <div className="space-y-1">
+                    <label className="font-bold text-slate-700">Folio Boleta:</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={dteConfig.folio_actual_boleta || 1}
+                      onChange={(e) =>
+                        setDteConfig({ ...dteConfig, folio_actual_boleta: Number(e.target.value) })
+                      }
+                      className="w-full bg-slate-50 border border-slate-300 font-mono font-bold text-slate-900 rounded px-2 py-1"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="font-bold text-slate-700">Folio Factura:</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={dteConfig.folio_actual_factura || 1}
+                      onChange={(e) =>
+                        setDteConfig({ ...dteConfig, folio_actual_factura: Number(e.target.value) })
+                      }
+                      className="w-full bg-slate-50 border border-slate-300 font-mono font-bold text-slate-900 rounded px-2 py-1"
+                    />
+                  </div>
+                </div>
+
+                {/* Emisión Automática */}
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                  <span className="font-bold text-slate-700">Emitir DTE al cobrar:</span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(dteConfig.emision_automatica)}
+                    onChange={(e) =>
+                      setDteConfig({ ...dteConfig, emision_automatica: e.target.checked ? 1 : 0 })
+                    }
+                    className="w-4 h-4 text-[#3a4d6b] rounded"
+                  />
+                </div>
+              </div>
+
               <button
-                onClick={downloadTemplate}
-                className="text-xs text-[#3a4d6b] hover:underline font-semibold flex items-center space-x-1"
+                type="submit"
+                disabled={isSavingDte}
+                className="w-full py-3 rounded-xl bg-[#3a4d6b] hover:bg-slate-700 text-white font-extrabold text-xs sm:text-sm shadow-md transition-all disabled:opacity-50 flex items-center justify-center space-x-2 cursor-pointer"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>Descargar Plantilla Excel</span>
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{isSavingDte ? "Guardando..." : "Guardar Configuración DTE"}</span>
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+
+      {/* TAB 2: IMPORTADOR MASIVO CSV / EXCEL */}
+      {activeTab === "CATALOGO" && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fadeIn">
+          <div className="lg:col-span-2 space-y-6">
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center space-x-2">
+                  <UploadCloud className="w-5 h-5 text-[#3a4d6b]" />
+                  <h2 className="font-bold text-sm text-slate-900">Importador Masivo de Catálogo</h2>
+                </div>
+                <button
+                  onClick={downloadTemplate}
+                  className="text-xs text-[#3a4d6b] hover:underline font-semibold flex items-center space-x-1"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Descargar Plantilla Excel</span>
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-600">
+                Carga miles de productos desde un archivo CSV o Excel (.xlsx). El sistema los guardará
+                en lotes de 100 registros en Turso.
+              </p>
+
+              {/* Zona de Drop */}
+              <div className="border-2 border-dashed border-slate-300 hover:border-slate-500 rounded-lg p-8 text-center bg-slate-50/50 transition-colors relative">
+                <input
+                  type="file"
+                  accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+                  onChange={handleFileUpload}
+                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                />
+                <FileSpreadsheet className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                <p className="text-xs font-semibold text-slate-800">
+                  Arrastra tu archivo aquí o haz clic para seleccionarlo
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Soporta .CSV y .XLSX</p>
+              </div>
+
+              {/* Mensajes */}
+              {importSuccessMessage && (
+                <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center space-x-2">
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+                  <span>{importSuccessMessage}</span>
+                </div>
+              )}
+
+              {importError && (
+                <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center space-x-2">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0 text-rose-600" />
+                  <span>{importError}</span>
+                </div>
+              )}
+
+              {/* Vista Previa */}
+              {parsedPreview.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-slate-800">
+                      Vista Previa: {parsedPreview.length} productos detectados
+                    </span>
+                    <button
+                      onClick={() => setParsedPreview([])}
+                      className="text-slate-400 hover:text-slate-600"
+                    >
+                      Descartar
+                    </button>
+                  </div>
+
+                  <div className="max-h-40 overflow-y-auto bg-slate-50 rounded border border-slate-200 p-2 text-xs divide-y divide-slate-200 font-mono">
+                    {parsedPreview.slice(0, 4).map((p, idx) => (
+                      <div key={idx} className="py-1 flex justify-between">
+                        <span className="text-slate-800 truncate max-w-[180px]">{p.nombre}</span>
+                        <span className="text-slate-600">SKU: {p.sku || "Auto"}</span>
+                        <span className="text-slate-900 font-semibold">{formatCLP(p.precio_venta || 0)}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    disabled={isImporting}
+                    onClick={handleExecuteImport}
+                    className="w-full py-2.5 rounded-lg bg-[#3a4d6b] hover:bg-slate-700 text-white font-bold text-xs shadow-xs transition-colors disabled:opacity-50 flex items-center justify-center space-x-2 cursor-pointer"
+                  >
+                    <UploadCloud className="w-4 h-4" />
+                    <span>
+                      {isImporting
+                        ? "Importando Productos a Turso..."
+                        : `Confirmar e Importar ${parsedPreview.length} Productos`}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Diagnóstico Turso */}
+          <div className="space-y-6">
+            <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-xs space-y-4">
+              <div className="flex items-center space-x-2 pb-3 border-b border-slate-100">
+                <Database className="w-5 h-5 text-emerald-600" />
+                <h3 className="font-bold text-sm text-slate-900">Estado de Turso LibSQL</h3>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between py-1 border-b border-slate-100">
+                  <span className="text-slate-500">Total Productos:</span>
+                  <span className="font-bold text-slate-900 font-mono">{productos.length}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-slate-100">
+                  <span className="text-slate-500">Total Ventas Registradas:</span>
+                  <span className="font-bold text-slate-900 font-mono">{ventas.length}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-slate-100">
+                  <span className="text-slate-500">Movimientos Kardex:</span>
+                  <span className="font-bold text-slate-900 font-mono">{movimientos.length}</span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => recargarDatos()}
+                className="w-full py-2 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Sincronizar Base de Datos</span>
               </button>
             </div>
 
-            <p className="text-xs text-slate-600">
-              Carga miles de productos desde un archivo CSV o Excel (.xlsx). El sistema los guardará
-              en lotes de 100 registros en Turso.
-            </p>
-
-            {/* Zona de Drop */}
-            <div className="border-2 border-dashed border-slate-300 hover:border-slate-500 rounded-lg p-8 text-center bg-slate-50/50 transition-colors relative">
-              <input
-                type="file"
-                accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
-                onChange={handleFileUpload}
-                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-              />
-              <FileSpreadsheet className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-              <p className="text-xs font-semibold text-slate-800">
-                Arrastra tu archivo aquí o haz clic para seleccionarlo
+            <div className="bg-rose-50 border border-rose-200 rounded-lg p-6 space-y-3">
+              <div className="flex items-center space-x-2">
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                <h3 className="font-bold text-xs text-rose-900 uppercase">Zona de Peligro</h3>
+              </div>
+              <p className="text-xs text-rose-700 leading-relaxed">
+                Vaciar el catálogo de prueba para comenzar desde cero.
               </p>
-              <p className="text-[11px] text-slate-400 mt-0.5">Soporta .CSV y .XLSX</p>
+              <button
+                onClick={() => setIsPurgeModalOpen(true)}
+                className="w-full py-1.5 rounded bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-colors cursor-pointer"
+              >
+                Vaciar Catálogo de Prueba
+              </button>
             </div>
-
-            {/* Mensajes */}
-            {importSuccessMessage && (
-              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center space-x-2">
-                <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
-                <span>{importSuccessMessage}</span>
-              </div>
-            )}
-
-            {importError && (
-              <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center space-x-2">
-                <AlertTriangle className="w-4 h-4 flex-shrink-0 text-rose-600" />
-                <span>{importError}</span>
-              </div>
-            )}
-
-            {/* Vista Previa */}
-            {parsedPreview.length > 0 && (
-              <div className="space-y-3 pt-2">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-slate-800">
-                    Vista Previa: {parsedPreview.length} productos detectados
-                  </span>
-                  <button
-                    onClick={() => setParsedPreview([])}
-                    className="text-slate-400 hover:text-slate-600"
-                  >
-                    Descartar
-                  </button>
-                </div>
-
-                <div className="max-h-40 overflow-y-auto bg-slate-50 rounded border border-slate-200 p-2 text-xs divide-y divide-slate-200 font-mono">
-                  {parsedPreview.slice(0, 4).map((p, idx) => (
-                    <div key={idx} className="py-1 flex justify-between">
-                      <span className="text-slate-800 truncate max-w-[180px]">{p.nombre}</span>
-                      <span className="text-slate-600">SKU: {p.sku || "Auto"}</span>
-                      <span className="text-slate-900 font-semibold">{formatCLP(p.precio_venta || 0)}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <button
-                  disabled={isImporting}
-                  onClick={handleExecuteImport}
-                  className="w-full py-2.5 rounded-lg bg-[#3a4d6b] hover:bg-slate-700 text-white font-bold text-xs shadow-xs transition-colors disabled:opacity-50 flex items-center justify-center space-x-2"
-                >
-                  <UploadCloud className="w-4 h-4" />
-                  <span>
-                    {isImporting
-                      ? "Importando a Turso..."
-                      : `Confirmar e Importar ${parsedPreview.length} Productos`}
-                  </span>
-                </button>
-              </div>
-            )}
-
-            {productos.length === 0 && (
-              <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between gap-3">
-                <div>
-                  <h4 className="font-bold text-xs text-slate-800">¿Quieres cargar productos de prueba?</h4>
-                  <p className="text-[11px] text-slate-500">
-                    Carga un catálogo inicial listo para probar el POS.
-                  </p>
-                </div>
-                <button
-                  disabled={isImporting}
-                  onClick={loadDemoCatalog}
-                  className="px-3.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 text-xs font-bold shadow-2xs whitespace-nowrap"
-                >
-                  Cargar Demo
-                </button>
-              </div>
-            )}
           </div>
         </div>
+      )}
 
-        {/* PANEL DERECHO: DIAGNÓSTICO & SEGURIDAD */}
-        <div className="space-y-6">
-          {/* Tarjeta de Seguridad y Cambio de Contraseña */}
-          <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-xs space-y-3">
-            <div className="flex items-center space-x-2 text-slate-900 font-bold pb-2 border-b border-slate-100">
-              <KeyRound className="w-4 h-4 text-[#3a4d6b]" />
-              <h2>Seguridad & Contraseña</h2>
-            </div>
+      {/* TAB 3: SEGURIDAD & CLAVE */}
+      {activeTab === "SEGURIDAD" && (
+        <div className="max-w-md bg-white border border-slate-200 rounded-xl p-6 shadow-xs space-y-4 animate-fadeIn">
+          <div className="flex items-center space-x-2 pb-3 border-b border-slate-100">
+            <Lock className="w-5 h-5 text-[#3a4d6b]" />
+            <h3 className="font-bold text-sm text-slate-900">Cambiar Contraseña de Acceso</h3>
+          </div>
 
-            <p className="text-xs text-slate-500">
-              Cambia la clave de acceso para tu cuenta <span className="font-bold text-slate-700">{user?.username || "ADMIN"}</span>.
-            </p>
-
+          <form onSubmit={handlePasswordSubmit} className="space-y-3 text-xs">
             {passwordFeedback && (
               <div
-                className={`p-2.5 rounded text-xs flex items-center space-x-1.5 ${
+                className={`p-2.5 rounded-lg text-xs font-bold ${
                   passwordFeedback.type === "success"
                     ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
                     : "bg-rose-50 text-rose-800 border border-rose-200"
                 }`}
               >
-                <span>{passwordFeedback.message}</span>
+                {passwordFeedback.message}
               </div>
             )}
 
-            <form onSubmit={handlePasswordSubmit} className="space-y-2 text-xs">
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-slate-600">Contraseña Actual</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Contraseña actual"
-                  value={currentPass}
-                  onChange={(e) => setCurrentPass(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-1.5 text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-slate-600">Nueva Contraseña</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Mínimo 4 caracteres"
-                  value={newPass}
-                  onChange={(e) => setNewPass(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-1.5 text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-slate-600">Confirmar Nueva Contraseña</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Repite la nueva contraseña"
-                  value={confirmNewPass}
-                  onChange={(e) => setConfirmNewPass(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-300 rounded px-2.5 py-1.5 text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-1 focus:ring-slate-500"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full mt-2 py-2 rounded bg-[#3a4d6b] hover:bg-slate-700 text-white font-bold text-xs shadow-xs transition-colors"
-              >
-                Actualizar Contraseña
-              </button>
-            </form>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-xs space-y-3">
-            <div className="flex items-center space-x-2 text-slate-900 font-bold pb-2 border-b border-slate-100">
-              <Database className="w-4 h-4 text-slate-700" />
-              <h2>Turso LibSQL Database</h2>
+            <div className="space-y-1">
+              <label className="font-bold text-slate-700">Contraseña Actual:</label>
+              <input
+                type="password"
+                required
+                value={currentPass}
+                onChange={(e) => setCurrentPass(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-1.5 focus:bg-white focus:outline-none"
+              />
             </div>
 
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between text-slate-600">
-                <span>Estado:</span>
-                <span className="font-bold text-emerald-700">En Línea (ACID)</span>
-              </div>
-              <div className="flex justify-between text-slate-600">
-                <span>Cuota Gratuita:</span>
-                <span className="font-bold text-slate-800">5.00 GB</span>
-              </div>
-              <div className="flex justify-between text-slate-600">
-                <span>SKUs Catálogo:</span>
-                <span className="font-bold text-slate-800">{productos.length}</span>
-              </div>
-              <div className="flex justify-between text-slate-600">
-                <span>Ventas Emitidas:</span>
-                <span className="font-bold text-slate-800">{ventas.length}</span>
-              </div>
-              <div className="flex justify-between text-slate-600">
-                <span>Registros Kardex:</span>
-                <span className="font-bold text-slate-800">{movimientos.length}</span>
-              </div>
+            <div className="space-y-1">
+              <label className="font-bold text-slate-700">Nueva Contraseña:</label>
+              <input
+                type="password"
+                required
+                value={newPass}
+                onChange={(e) => setNewPass(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-1.5 focus:bg-white focus:outline-none"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-bold text-slate-700">Confirmar Nueva Contraseña:</label>
+              <input
+                type="password"
+                required
+                value={confirmNewPass}
+                onChange={(e) => setConfirmNewPass(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-300 text-slate-900 rounded-lg px-3 py-1.5 focus:bg-white focus:outline-none"
+              />
             </div>
 
             <button
-              onClick={() => recargarDatos()}
-              className="w-full py-1.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors"
+              type="submit"
+              className="w-full py-2 rounded-lg bg-[#3a4d6b] hover:bg-slate-700 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer"
             >
-              <RefreshCw className="w-3 h-3 text-slate-600" />
-              <span>Verificar Sincronización</span>
+              Actualizar Contraseña
             </button>
-          </div>
-
-          {/* Vaciar Catálogo */}
-          <div className="bg-white border border-rose-200 rounded-lg p-5 shadow-xs space-y-2">
-            <div className="flex items-center space-x-2 text-rose-700 font-bold pb-1 border-b border-rose-100">
-              <Trash2 className="w-4 h-4" />
-              <h2>Mantenimiento</h2>
-            </div>
-            <p className="text-xs text-slate-600">
-              Borra productos y ventas de prueba para iniciar en blanco.
-            </p>
-            <button
-              onClick={() => setIsPurgeModalOpen(true)}
-              className="w-full py-1.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-colors"
-            >
-              Vaciar Catálogo de Prueba
-            </button>
-          </div>
+          </form>
         </div>
-      </div>
+      )}
 
       {/* Modal Purga */}
       {isPurgeModalOpen && (
