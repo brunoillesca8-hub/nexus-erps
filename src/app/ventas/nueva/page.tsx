@@ -230,7 +230,6 @@ export default function PosPage() {
   }, [productos, selectedCategoria, searchQuery]);
 
   // Cálculos
-  const isSinPaga = metodoPago === "SIN_PAGA";
   const totalItemsCount = cart.reduce((acc, it) => acc + it.cantidad, 0);
   const subtotal = cart.reduce((acc, it) => acc + it.subtotal, 0);
   const totalDescuentosItems = cart.reduce(
@@ -238,11 +237,9 @@ export default function PosPage() {
     0
   );
 
-  const baseImponible = isSinPaga
-    ? 0
-    : Math.max(0, subtotal - Number(descuentoGeneral || 0));
-  const ivaCalculado = isSinPaga ? 0 : Math.round((baseImponible * 19) / 119);
-  const total = isSinPaga ? 0 : baseImponible;
+  const baseImponible = Math.max(0, subtotal - Number(descuentoGeneral || 0));
+  const ivaCalculado = Math.round((baseImponible * 19) / 119);
+  const total = baseImponible;
 
   const handleConfirmarVenta = async () => {
     if (cart.length === 0) {
@@ -253,27 +250,20 @@ export default function PosPage() {
     setIsProcessing(true);
     setErrorMessage(null);
 
-    const descTotal = isSinPaga ? subtotal : Number(descuentoGeneral) || 0;
-    const notaFinal = isSinPaga
-      ? `Consumo Personal / Trabajadores (Sin Paga)${notas ? ` - ${notas}` : ""}`
-      : notas || null;
-
     const payload = {
       empresa_id: empresa?.id || "emp_default",
       sucursal_id: sucursales[0]?.id || "suc_default",
-      cliente_id: isSinPaga ? "cli_personal" : selectedClienteId || null,
+      cliente_id: selectedClienteId || null,
       metodo_pago: metodoPago,
-      descuento: descTotal,
-      notas: notaFinal,
+      descuento: Number(descuentoGeneral) || 0,
+      notas: notas || null,
       items: cart.map((it) => ({
         producto_id: it.producto.id,
         cantidad: it.cantidad,
-        precio_unitario: isSinPaga ? 0 : it.precio_unitario,
+        precio_unitario: it.precio_unitario,
         costo_unitario: it.producto.precio_compra || 0,
-        descuento: isSinPaga ? it.precio_unitario : it.descuento_unitario || 0,
-        motivo_descuento: isSinPaga
-          ? "Consumo Personal (100% Bonificado)"
-          : it.motivo_descuento || undefined,
+        descuento: it.descuento_unitario || 0,
+        motivo_descuento: it.motivo_descuento || undefined,
       })),
     };
 
@@ -287,16 +277,15 @@ export default function PosPage() {
         sucursal_id: payload.sucursal_id,
         cliente_id: payload.cliente_id,
         numero_folio: res.folio,
-        subtotal: isSinPaga ? 0 : subtotal,
-        descuento: isSinPaga ? subtotal : (Number(descuentoGeneral) || 0) + totalDescuentosItems,
+        subtotal,
+        descuento: (Number(descuentoGeneral) || 0) + totalDescuentosItems,
         impuesto: ivaCalculado,
-        total: isSinPaga ? 0 : total,
+        total,
         metodo_pago: metodoPago,
         estado: "COMPLETADA",
         fecha_venta: new Date().toISOString(),
-        cliente_nombre: isSinPaga
-          ? "Personal / Trabajador (Consumo Interno)"
-          : clientes.find((c) => c.id === selectedClienteId)?.nombre || "Consumidor Final",
+        cliente_nombre:
+          clientes.find((c) => c.id === selectedClienteId)?.nombre || "Consumidor Final",
       };
 
       setCompletedVenta(nuevaVenta);
@@ -341,8 +330,7 @@ export default function PosPage() {
         <select
           value={selectedClienteId}
           onChange={(e) => setSelectedClienteId(e.target.value)}
-          disabled={isSinPaga}
-          className="bg-white border border-slate-300 text-slate-800 rounded px-2 py-1 text-xs focus:outline-none max-w-[190px] font-medium disabled:opacity-50"
+          className="bg-white border border-slate-300 text-slate-800 rounded px-2 py-1 text-xs focus:outline-none max-w-[190px] font-medium"
         >
           <option value="cli_default">Consumidor Final (General)</option>
           {clientes
@@ -416,7 +404,7 @@ export default function PosPage() {
                     </div>
 
                     <span className="font-extrabold text-slate-900 min-w-[62px] text-right font-mono text-xs">
-                      {isSinPaga ? "$0" : formatCLP(item.subtotal)}
+                      {formatCLP(item.subtotal)}
                     </span>
 
                     <button
@@ -430,32 +418,30 @@ export default function PosPage() {
                 </div>
 
                 {/* BOTÓN DE DESCUENTO DESTACADO Y VISIBLE */}
-                {!isSinPaga && (
-                  <div className="flex items-center justify-between pt-0.5">
-                    {hasDiscount ? (
-                      <div className="flex items-center space-x-1 bg-emerald-50 border border-emerald-300 text-emerald-900 px-2 py-0.5 rounded-md text-[10px] font-bold shadow-2xs">
-                        <Sparkles className="w-3 h-3 text-emerald-600" />
-                        <span>{item.motivo_descuento || `Desc: -${formatCLP(item.descuento_unitario || 0)}`}</span>
-                        <button
-                          type="button"
-                          onClick={() => setItemDescuentoModal({ item, index: idx })}
-                          className="text-blue-700 underline font-extrabold ml-1 hover:text-blue-900"
-                        >
-                          Cambiar
-                        </button>
-                      </div>
-                    ) : (
+                <div className="flex items-center justify-between pt-0.5">
+                  {hasDiscount ? (
+                    <div className="flex items-center space-x-1 bg-emerald-50 border border-emerald-300 text-emerald-900 px-2 py-0.5 rounded-md text-[10px] font-bold shadow-2xs">
+                      <Sparkles className="w-3 h-3 text-emerald-600" />
+                      <span>{item.motivo_descuento || `Desc: -${formatCLP(item.descuento_unitario || 0)}`}</span>
                       <button
                         type="button"
                         onClick={() => setItemDescuentoModal({ item, index: idx })}
-                        className="flex items-center space-x-1 px-2.5 py-1 rounded-md bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 text-[10.5px] font-extrabold shadow-2xs transition-all hover:scale-101"
+                        className="text-blue-700 underline font-extrabold ml-1 hover:text-blue-900"
                       >
-                        <Cake className="w-3.5 h-3.5 text-amber-700" />
-                        <span>% Aplicar Descuento (Día Anterior)</span>
+                        Cambiar
                       </button>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setItemDescuentoModal({ item, index: idx })}
+                      className="flex items-center space-x-1 px-2.5 py-1 rounded-md bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 text-[10.5px] font-extrabold shadow-2xs transition-all hover:scale-101"
+                    >
+                      <Cake className="w-3.5 h-3.5 text-amber-700" />
+                      <span>% Aplicar Descuento (Día Anterior)</span>
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })
@@ -464,35 +450,29 @@ export default function PosPage() {
 
       {/* FOOTER FIJO: Métodos de Pago, Totales y BOTÓN CONFIRMAR VENTA (SIEMPRE VISIBLE ABAJO) */}
       <div className="p-3 bg-slate-50 border-t border-slate-200 space-y-2 flex-shrink-0 shadow-inner">
-        {/* Selector de Método de Pago con botón "Sin Paga (Trabajadores)" */}
+        {/* Selector de Método de Pago */}
         <div className="space-y-1">
           <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block">
-            Método de Pago / Destino
+            Método de Pago
           </span>
-          <div className="grid grid-cols-3 gap-1">
+          <div className="grid grid-cols-2 gap-1.5">
             {[
               { id: "EFECTIVO", label: "Efectivo", icon: Banknote },
               { id: "TARJETA_DEBITO", label: "Débito", icon: CreditCard },
               { id: "TARJETA_CREDITO", label: "Crédito", icon: CreditCard },
               { id: "TRANSFERENCIA", label: "Transf.", icon: Smartphone },
-              { id: "SIN_PAGA", label: "Sin Paga (Personal)", icon: Coffee, highlight: true },
             ].map((m) => {
               const Icon = m.icon;
               const isSelected = metodoPago === m.id;
-              const isSinPagaBtn = m.id === "SIN_PAGA";
 
               return (
                 <button
                   key={m.id}
                   type="button"
                   onClick={() => setMetodoPago(m.id as MetodoPago)}
-                  className={`flex items-center justify-center space-x-1 px-1.5 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
+                  className={`flex items-center justify-center space-x-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
                     isSelected
-                      ? isSinPagaBtn
-                        ? "bg-amber-600 text-white shadow-xs col-span-2"
-                        : "bg-[#3a4d6b] text-white shadow-xs"
-                      : isSinPagaBtn
-                      ? "bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100 col-span-2"
+                      ? "bg-[#3a4d6b] text-white shadow-xs"
                       : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-300"
                   }`}
                 >
@@ -504,41 +484,26 @@ export default function PosPage() {
           </div>
         </div>
 
-        {/* Alerta de Consumo Personal Sin Paga */}
-        {isSinPaga && (
-          <div className="p-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-[11px] font-bold flex items-center space-x-1.5">
-            <UserCheck className="w-4 h-4 text-amber-700 flex-shrink-0" />
-            <span>Consumo de trabajadores: Stock se descuenta, total $0.</span>
-          </div>
-        )}
-
         {/* Resumen de Totales */}
         <div className="pt-1.5 border-t border-slate-200 space-y-0.5 text-xs">
           <div className="flex justify-between text-slate-600">
             <span>Subtotal:</span>
             <span className="font-mono">{formatCLP(subtotal)}</span>
           </div>
-          {totalDescuentosItems > 0 && !isSinPaga && (
+          {totalDescuentosItems > 0 && (
             <div className="flex justify-between text-emerald-700 font-bold">
               <span>Descuentos Día Anterior:</span>
               <span className="font-mono">-{formatCLP(totalDescuentosItems)}</span>
             </div>
           )}
-          {isSinPaga ? (
-            <div className="flex justify-between text-amber-800 font-bold">
-              <span>Bonificación Trabajadores:</span>
-              <span className="font-mono">-{formatCLP(subtotal)}</span>
-            </div>
-          ) : (
-            <div className="flex justify-between text-slate-600">
-              <span>IVA (19% inc.):</span>
-              <span className="font-mono">{formatCLP(ivaCalculado)}</span>
-            </div>
-          )}
+          <div className="flex justify-between text-slate-600">
+            <span>IVA (19% inc.):</span>
+            <span className="font-mono">{formatCLP(ivaCalculado)}</span>
+          </div>
           <div className="flex justify-between items-baseline pt-1 border-t border-slate-300 font-extrabold text-slate-900">
             <span className="text-xs">TOTAL A COBRAR:</span>
-            <span className={`text-lg font-mono ${isSinPaga ? "text-amber-700" : "text-slate-900"}`}>
-              {isSinPaga ? "$0 CLP (Sin Paga)" : formatCLP(total)}
+            <span className="text-lg font-mono text-slate-900">
+              {formatCLP(total)}
             </span>
           </div>
         </div>
@@ -547,18 +512,12 @@ export default function PosPage() {
         <button
           disabled={cart.length === 0 || isProcessing}
           onClick={handleConfirmarVenta}
-          className={`w-full py-3 rounded-xl text-white font-extrabold text-xs sm:text-sm shadow-md transition-all disabled:opacity-40 flex items-center justify-center space-x-2 active:scale-98 cursor-pointer ${
-            isSinPaga
-              ? "bg-amber-600 hover:bg-amber-700"
-              : "bg-[#3a4d6b] hover:bg-slate-700"
-          }`}
+          className="w-full py-3 rounded-xl text-white font-extrabold text-xs sm:text-sm bg-[#3a4d6b] hover:bg-slate-700 shadow-md transition-all disabled:opacity-40 flex items-center justify-center space-x-2 active:scale-98 cursor-pointer"
         >
           <CheckCircle2 className="w-4 h-4" />
           <span>
             {isProcessing
               ? "Registrando Venta en Turso..."
-              : isSinPaga
-              ? `Registrar Consumo Personal • $0`
               : `Confirmar Venta • ${formatCLP(total)}`}
           </span>
         </button>
@@ -740,7 +699,7 @@ export default function PosPage() {
               <div className="text-left">
                 <span className="text-[10px] text-slate-500 block font-bold">Total Pedido</span>
                 <span className="font-extrabold text-sm font-mono text-slate-900">
-                  {isSinPaga ? "$0 (Sin Paga)" : formatCLP(total)}
+                  {formatCLP(total)}
                 </span>
               </div>
               <ChevronUp className="w-4 h-4 text-slate-400" />

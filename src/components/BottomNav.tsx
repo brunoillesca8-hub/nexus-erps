@@ -244,20 +244,6 @@ export default function BottomNav() {
                     </div>
                     <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
                   </Link>
-
-                  <Link
-                    href="/suscripciones"
-                    onClick={closeMenu}
-                    className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-800 font-medium"
-                  >
-                    <div className="flex items-center space-x-2.5">
-                      <CreditCard className="w-4 h-4 text-[#3a4d6b]" />
-                      <span>Planes & Suscripciones</span>
-                    </div>
-                    <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
-                      PRO
-                    </span>
-                  </Link>
                 </div>
               </div>
 

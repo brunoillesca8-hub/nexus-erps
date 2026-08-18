@@ -201,19 +201,6 @@ export default function Sidebar() {
               <Settings className="w-3.5 h-3.5 text-slate-500" />
               <span>Configuración</span>
             </Link>
-
-            <Link
-              href="/suscripciones"
-              className={navItemClass(pathname === "/suscripciones")}
-            >
-              <CreditCard className="w-3.5 h-3.5 text-slate-500" />
-              <div className="flex items-center space-x-1.5">
-                <span>Suscripciones</span>
-                <span className="px-1 py-0.1 rounded bg-amber-100 text-amber-800 text-[9px] font-bold">
-                  PRO
-                </span>
-              </div>
-            </Link>
           </div>
         </div>
       </div>
